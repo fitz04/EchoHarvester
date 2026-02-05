@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Sources - EchoHarvester{% endblock %}
+{% block nav_sources %}bg-indigo-700{% endblock %}
+
+{% block content %}
+<div x-data="sourcesPage()" x-init="init()">
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold text-gray-800">Sources</h1>
+        <button @click="showAddModal = true"
+            class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition">
+            + Add Source
+        </button>
+    </div>
+
+    <!-- Sources List -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <table class="w-full">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Label</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">URL / Path</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Items</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+                <template x-for="source in sources" :key="source.id">
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 text-sm font-medium text-gray-900" x-text="source.label || '-'"></td>
+                        <td class="px-6 py-4 text-sm text-gray-600">
+                            <span class="px-2 py-1 bg-gray-100 rounded text-xs" x-text="source.type"></span>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-500 max-w-xs truncate" x-text="source.url_or_path"></td>
+                        <td class="px-6 py-4 text-sm">
+                            <span class="px-2 py-1 rounded text-xs"
+                                :class="{
+                                    'bg-green-100 text-green-800': source.status === 'done',
+                                    'bg-yellow-100 text-yellow-800': source.status === 'processing',
+                                    'bg-gray-100 text-gray-800': source.status === 'pending',
+                                    'bg-red-100 text-red-800': source.status === 'error'
+                                }"
+                                x-text="source.status">
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-600">
+                            <span x-text="source.processed_items"></span> / <span x-text="source.total_items"></span>
+                        </td>
+                        <td class="px-6 py-4 text-right text-sm">
+                            <button @click="deleteSource(source.id)"
+                                class="text-red-600 hover:text-red-800">Delete</button>
+                        </td>
+                    </tr>
+                </template>
+                <tr x-show="sources.length === 0">
+                    <td colspan="6" class="px-6 py-8 text-center text-gray-500">
+                        No sources added yet. Click "Add Source" to get started.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Add Source Modal -->
+    <div x-show="showAddModal" x-cloak
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+        @click.self="showAddModal = false">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-semibold text-gray-800">Add Source</h3>
+            </div>
+            <form @submit.prevent="addSource" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                    <select x-model="newSource.type"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="youtube_channel">YouTube Channel</option>
+                        <option value="youtube_playlist">YouTube Playlist</option>
+                        <option value="youtube_video">YouTube Video</option>
+                        <option value="local_directory">Local Directory</option>
+                        <option value="local_file">Local File</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        <span x-text="newSource.type.startsWith('youtube') ? 'URL' : 'Path'"></span>
+                    </label>
+                    <input type="text" x-model="newSource.url_or_path"
+                        :placeholder="newSource.type.startsWith('youtube') ? 'https://www.youtube.com/...' : '/path/to/media'"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Label (optional)</label>
+                    <input type="text" x-model="newSource.label" placeholder="My Media Source"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" @click="showAddModal = false"
+                        class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition">
+                        Cancel
+                    </button>
+                    <button type="submit"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition">
+                        Add Source
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function sourcesPage() {
+    return {
+        sources: [],
+        showAddModal: false,
+        newSource: {
+            type: 'youtube_channel',
+            url_or_path: '',
+            label: ''
+        },
+
+        async init() {
+            await this.loadSources();
+        },
+
+        async loadSources() {
+            try {
+                const resp = await fetch('/api/sources');
+                this.sources = await resp.json();
+            } catch (e) {
+                console.error('Failed to load sources:', e);
+            }
+        },
+
+        async addSource() {
+            try {
+                const resp = await fetch('/api/sources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.newSource)
+                });
+                if (resp.ok) {
+                    this.showAddModal = false;
+                    this.newSource = { type: 'youtube_channel', url_or_path: '', label: '' };
+                    await this.loadSources();
+                }
+            } catch (e) {
+                console.error('Failed to add source:', e);
+            }
+        },
+
+        async deleteSource(id) {
+            if (!confirm('Are you sure you want to delete this source?')) return;
+            try {
+                await fetch(`/api/sources/${id}`, { method: 'DELETE' });
+                await this.loadSources();
+            } catch (e) {
+                console.error('Failed to delete source:', e);
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

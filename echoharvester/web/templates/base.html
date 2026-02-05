@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}EchoHarvester{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <nav class="bg-indigo-600 text-white shadow-lg">
+        <div class="container mx-auto px-4">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-8">
+                    <a href="/" class="text-xl font-bold">EchoHarvester</a>
+                    <div class="hidden md:flex space-x-4">
+                        <a href="/" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_dashboard %}{% endblock %}">Dashboard</a>
+                        <a href="/sources" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_sources %}{% endblock %}">Sources</a>
+                        <a href="/pipeline" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_pipeline %}{% endblock %}">Pipeline</a>
+                        <a href="/explore" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_explore %}{% endblock %}">Explore</a>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div x-data="{ status: 'idle' }" x-init="
+                        const ws = new WebSocket(`ws://${window.location.host}/ws/progress`);
+                        ws.onmessage = (e) => {
+                            const data = JSON.parse(e.data);
+                            if (data.status) status = data.status.state;
+                            if (data.event === 'pipeline_start') status = 'running';
+                            if (data.event === 'pipeline_complete') status = data.state;
+                        };
+                    ">
+                        <span class="flex items-center">
+                            <span class="w-2 h-2 rounded-full mr-2"
+                                :class="{
+                                    'bg-green-400': status === 'idle' || status === 'completed',
+                                    'bg-yellow-400 animate-pulse': status === 'running',
+                                    'bg-red-400': status === 'error'
+                                }"></span>
+                            <span x-text="status" class="text-sm capitalize"></span>
+                        </span>
+                    </div>
+                    <a href="/docs" class="text-sm hover:underline">API Docs</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto px-4 py-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="bg-gray-800 text-gray-400 py-4 mt-auto">
+        <div class="container mx-auto px-4 text-center text-sm">
+            EchoHarvester - Korean ASR Training Data Pipeline
+        </div>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

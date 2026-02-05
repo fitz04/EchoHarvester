@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}Explore - EchoHarvester{% endblock %}
+{% block nav_explore %}bg-indigo-700{% endblock %}
+
+{% block content %}
+<div x-data="explorePage()" x-init="init()">
+    <h1 class="text-3xl font-bold text-gray-800 mb-8">Explore Data</h1>
+
+    <!-- Filters -->
+    <div class="bg-white rounded-lg shadow p-6 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <select x-model="filters.status" @change="loadSegments()"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                    <option value="">All</option>
+                    <option value="gpu_pass">GPU Pass</option>
+                    <option value="gpu_reject">GPU Reject</option>
+                    <option value="cpu_pass">CPU Pass</option>
+                    <option value="cpu_reject">CPU Reject</option>
+                    <option value="exported">Exported</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Media ID</label>
+                <input type="text" x-model="filters.media_id" @change="loadSegments()"
+                    placeholder="Filter by media ID"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Limit</label>
+                <select x-model="filters.limit" @change="loadSegments()"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+            <div class="flex items-end">
+                <button @click="loadSegments()"
+                    class="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition">
+                    Search
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-gray-800">
+                Segments
+                <span class="text-sm font-normal text-gray-500">
+                    (<span x-text="total"></span> total)
+                </span>
+            </h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Original Text</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Whisper Text</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">CER</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SNR</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    <template x-for="seg in segments" :key="seg.id">
+                        <tr class="hover:bg-gray-50 cursor-pointer" @click="selectSegment(seg)">
+                            <td class="px-4 py-3 text-sm font-mono text-gray-500" x-text="seg.id.substring(0, 16) + '...'"></td>
+                            <td class="px-4 py-3 text-sm text-gray-600" x-text="(seg.duration_sec || 0).toFixed(2) + 's'"></td>
+                            <td class="px-4 py-3 text-sm text-gray-800 max-w-xs truncate" x-text="seg.normalized_text || seg.original_text || '-'"></td>
+                            <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate" x-text="seg.whisper_text || '-'"></td>
+                            <td class="px-4 py-3 text-sm">
+                                <span class="px-2 py-1 rounded text-xs"
+                                    :class="{
+                                        'bg-green-100 text-green-800': (seg.cer || 0) < 0.1,
+                                        'bg-yellow-100 text-yellow-800': (seg.cer || 0) >= 0.1 && (seg.cer || 0) < 0.15,
+                                        'bg-red-100 text-red-800': (seg.cer || 0) >= 0.15
+                                    }"
+                                    x-text="seg.cer ? ((seg.cer * 100).toFixed(1) + '%') : '-'">
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-sm text-gray-600" x-text="seg.snr_db ? seg.snr_db.toFixed(1) + 'dB' : '-'"></td>
+                            <td class="px-4 py-3 text-sm">
+                                <span class="px-2 py-1 rounded text-xs"
+                                    :class="{
+                                        'bg-green-100 text-green-800': seg.status?.includes('pass') || seg.status === 'exported',
+                                        'bg-red-100 text-red-800': seg.status?.includes('reject'),
+                                        'bg-gray-100 text-gray-800': seg.status === 'pending'
+                                    }"
+                                    x-text="seg.status">
+                                </span>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="segments.length === 0">
+                        <td colspan="7" class="px-6 py-8 text-center text-gray-500">
+                            No segments found.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="px-6 py-4 border-t border-gray-200 flex justify-between items-center">
+            <button @click="prevPage()" :disabled="filters.offset === 0"
+                class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                Previous
+            </button>
+            <span class="text-sm text-gray-500">
+                Showing <span x-text="filters.offset + 1"></span> - <span x-text="Math.min(filters.offset + filters.limit, total)"></span>
+            </span>
+            <button @click="nextPage()" :disabled="filters.offset + filters.limit >= total"
+                class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                Next
+            </button>
+        </div>
+    </div>
+
+    <!-- Segment Detail Modal -->
+    <div x-show="selectedSegment" x-cloak
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+        @click.self="selectedSegment = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h3 class="text-lg font-semibold text-gray-800">Segment Detail</h3>
+                <button @click="selectedSegment = null" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 space-y-4" x-show="selectedSegment">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="text-sm font-medium text-gray-500">ID</label>
+                        <p class="font-mono text-sm" x-text="selectedSegment?.id"></p>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium text-gray-500">Status</label>
+                        <p x-text="selectedSegment?.status"></p>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium text-gray-500">Duration</label>
+                        <p x-text="(selectedSegment?.duration_sec || 0).toFixed(2) + 's'"></p>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium text-gray-500">CER</label>
+                        <p x-text="selectedSegment?.cer ? ((selectedSegment.cer * 100).toFixed(2) + '%') : '-'"></p>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium text-gray-500">SNR</label>
+                        <p x-text="selectedSegment?.snr_db ? (selectedSegment.snr_db.toFixed(1) + ' dB') : '-'"></p>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium text-gray-500">Speech Ratio</label>
+                        <p x-text="selectedSegment?.speech_ratio ? ((selectedSegment.speech_ratio * 100).toFixed(1) + '%') : '-'"></p>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="text-sm font-medium text-gray-500">Original Text</label>
+                    <p class="mt-1 p-3 bg-gray-50 rounded-lg" x-text="selectedSegment?.original_text || '-'"></p>
+                </div>
+
+                <div>
+                    <label class="text-sm font-medium text-gray-500">Normalized Text</label>
+                    <p class="mt-1 p-3 bg-blue-50 rounded-lg" x-text="selectedSegment?.normalized_text || '-'"></p>
+                </div>
+
+                <div>
+                    <label class="text-sm font-medium text-gray-500">Whisper Text</label>
+                    <p class="mt-1 p-3 bg-green-50 rounded-lg" x-text="selectedSegment?.whisper_text || '-'"></p>
+                </div>
+
+                <div x-show="selectedSegment?.reject_reason">
+                    <label class="text-sm font-medium text-gray-500">Reject Reason</label>
+                    <p class="mt-1 p-3 bg-red-50 rounded-lg text-red-800" x-text="selectedSegment?.reject_reason"></p>
+                </div>
+
+                <div x-show="selectedSegment?.audio_path">
+                    <label class="text-sm font-medium text-gray-500">Audio</label>
+                    <audio controls class="mt-1 w-full">
+                        <source :src="'/static/audio/' + selectedSegment?.id + '.wav'" type="audio/wav">
+                    </audio>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function explorePage() {
+    return {
+        segments: [],
+        total: 0,
+        filters: {
+            status: '',
+            media_id: '',
+            limit: 50,
+            offset: 0
+        },
+        selectedSegment: null,
+
+        async init() {
+            await this.loadSegments();
+        },
+
+        async loadSegments() {
+            try {
+                const params = new URLSearchParams();
+                if (this.filters.status) params.set('status', this.filters.status);
+                if (this.filters.media_id) params.set('media_id', this.filters.media_id);
+                params.set('limit', this.filters.limit);
+                params.set('offset', this.filters.offset);
+
+                const resp = await fetch('/api/dashboard/segments?' + params);
+                const data = await resp.json();
+                this.segments = data.segments;
+                this.total = data.total;
+            } catch (e) {
+                console.error('Failed to load segments:', e);
+            }
+        },
+
+        selectSegment(seg) {
+            this.selectedSegment = seg;
+        },
+
+        prevPage() {
+            this.filters.offset = Math.max(0, this.filters.offset - this.filters.limit);
+            this.loadSegments();
+        },
+
+        nextPage() {
+            if (this.filters.offset + this.filters.limit < this.total) {
+                this.filters.offset += this.filters.limit;
+                this.loadSegments();
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

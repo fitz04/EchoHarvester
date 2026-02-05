@@ -1,0 +1,96 @@
+# EchoHarvester 설정 파일
+
+# 입력 소스 목록
+sources:
+  # YouTube 채널
+  # - type: youtube_channel
+  #   url: "https://www.youtube.com/@channel_name"
+  #   label: "채널이름"
+
+  # YouTube 플레이리스트
+  # - type: youtube_playlist
+  #   url: "https://www.youtube.com/playlist?list=PL..."
+  #   label: "플레이리스트이름"
+
+  # YouTube 단일 영상
+  # - type: youtube_video
+  #   url: "https://www.youtube.com/watch?v=..."
+  #   label: "영상이름"
+
+  # 로컬 디렉토리 (동영상/음성 파일 일괄 처리)
+  # - type: local_directory
+  #   path: "/path/to/media/folder"
+  #   pattern: "*.mp4"  # 파일 패턴 (*.mp4, *.wav, *.mp3 등)
+  #   recursive: true   # 하위 디렉토리 포함
+  #   label: "로컬영상"
+
+  # 로컬 단일 파일
+  # - type: local_file
+  #   path: "/path/to/media/file.mp4"
+  #   subtitle_path: "/path/to/subtitle.vtt"  # 선택사항
+  #   label: "단일파일"
+
+# 자막 설정
+subtitles:
+  languages: ["ko"]                    # 대상 언어
+  include_auto_generated: true         # 자동생성 자막 포함 여부
+  prefer_manual: true                  # 수동자막 우선
+
+# 필터링 임계값
+filters:
+  min_duration_sec: 0.5                # 최소 세그먼트 길이 (초)
+  max_duration_sec: 30.0               # 최대 세그먼트 길이 (초)
+  min_snr_db: 10.0                     # 최소 SNR (dB)
+  min_speech_ratio: 0.5                # 최소 음성 비율 (VAD 기준)
+  cer_threshold_manual: 0.15           # 수동자막 CER 임계값
+  cer_threshold_auto: 0.10             # 자동자막 CER 임계값 (더 엄격)
+
+# 다운로드 설정 (YouTube 전용)
+download:
+  max_concurrent: 3                    # 동시 다운로드 수
+  rate_limit: "1M"                     # 다운로드 속도 제한
+  retry_count: 3                       # 재시도 횟수
+  retry_delay_sec: 5                   # 재시도 대기 시간 (초)
+
+# 오디오 설정
+audio:
+  sample_rate: 16000                   # 샘플링 레이트 (Hz)
+  format: "wav"                        # 출력 포맷
+  channels: 1                          # 모노
+  segment_padding_sec: 0.15            # 세그먼트 앞뒤 패딩 (초)
+
+# GPU 검증 설정
+validation:
+  model: "seastar105/whisper-medium-komixv2"  # faster-whisper 모델
+  device: "cuda"                       # cuda 또는 cpu
+  compute_type: "float16"              # float16, int8, float32
+  batch_size: 16                       # 배치 크기
+  beam_size: 5                         # 빔 서치 크기
+  language: "ko"                       # 강제 언어 설정
+
+# 경로 설정
+paths:
+  work_dir: "./work"                   # 작업 중간 파일 경로
+  output_dir: "./output"               # Lhotse Shar 출력 경로
+  archive_dir: "./archive"             # 원본 보관 경로 (선택)
+  db_path: "./echoharvester.db"        # SQLite 데이터베이스 경로
+
+# 파이프라인 설정
+pipeline:
+  num_cpu_workers: 4                   # CPU 전처리 워커 수
+  gpu_queue_size: 100                  # GPU 큐 버퍼 크기
+  checkpoint_interval: 50              # N개 처리마다 체크포인트
+  auto_resume: true                    # 자동 재개 활성화
+
+# 웹 서버 설정
+web:
+  host: "127.0.0.1"                    # 바인딩 호스트
+  port: 8000                           # 포트
+  debug: false                         # 디버그 모드
+  reload: false                        # 자동 리로드
+
+# 로깅 설정
+logging:
+  level: "INFO"                        # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "./logs/echoharvester.log"     # 로그 파일 경로 (null이면 콘솔만)

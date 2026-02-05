@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - EchoHarvester{% endblock %}
+{% block nav_dashboard %}bg-indigo-700{% endblock %}
+
+{% block content %}
+<div x-data="dashboard()" x-init="init()">
+    <h1 class="text-3xl font-bold text-gray-800 mb-8">Dashboard</h1>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="text-gray-500 text-sm">Total Sources</div>
+            <div class="text-3xl font-bold text-gray-800" x-text="stats.total_sources || 0"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="text-gray-500 text-sm">Media Items</div>
+            <div class="text-3xl font-bold text-gray-800" x-text="stats.total_media_items || 0"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="text-gray-500 text-sm">Total Segments</div>
+            <div class="text-3xl font-bold text-gray-800" x-text="stats.total_segments || 0"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="text-gray-500 text-sm">Passed Duration</div>
+            <div class="text-3xl font-bold text-indigo-600">
+                <span x-text="(stats.passed_duration_hours || 0).toFixed(1)"></span>
+                <span class="text-lg">hrs</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <!-- Segment Status -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Segment Status</h2>
+            <div class="space-y-3">
+                <template x-for="(count, status) in stats.segment_status" :key="status">
+                    <div class="flex items-center">
+                        <div class="w-24 text-sm text-gray-600" x-text="status"></div>
+                        <div class="flex-1 bg-gray-200 rounded-full h-4 mx-2">
+                            <div class="h-4 rounded-full"
+                                :class="{
+                                    'bg-green-500': status.includes('pass') || status === 'exported',
+                                    'bg-red-400': status.includes('reject') || status === 'error',
+                                    'bg-yellow-400': status.includes('processing'),
+                                    'bg-gray-400': status === 'pending'
+                                }"
+                                :style="'width: ' + (stats.total_segments > 0 ? (count / stats.total_segments * 100) : 0) + '%'">
+                            </div>
+                        </div>
+                        <div class="w-16 text-right text-sm font-medium" x-text="count"></div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- CER Distribution -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">CER Distribution</h2>
+            <div class="space-y-3">
+                <template x-for="(count, range) in stats.cer_distribution" :key="range">
+                    <div class="flex items-center">
+                        <div class="w-20 text-sm text-gray-600" x-text="range"></div>
+                        <div class="flex-1 bg-gray-200 rounded-full h-4 mx-2">
+                            <div class="bg-indigo-500 h-4 rounded-full"
+                                :style="'width: ' + Math.min(100, count / 10) + '%'">
+                            </div>
+                        </div>
+                        <div class="w-16 text-right text-sm font-medium" x-text="count"></div>
+                    </div>
+                </template>
+                <div class="text-sm text-gray-500 mt-2">
+                    Average CER: <span class="font-medium" x-text="((stats.avg_cer || 0) * 100).toFixed(2) + '%'"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Segments -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-800">Recent Segments</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Media</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Text</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CER</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    <template x-for="seg in recent" :key="seg.id">
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 text-sm font-mono text-gray-500" x-text="seg.id.substring(0, 20) + '...'"></td>
+                            <td class="px-6 py-4 text-sm text-gray-800" x-text="(seg.media_title || '').substring(0, 30)"></td>
+                            <td class="px-6 py-4 text-sm text-gray-600" x-text="(seg.normalized_text || '').substring(0, 40) + '...'"></td>
+                            <td class="px-6 py-4 text-sm">
+                                <span class="px-2 py-1 rounded text-xs"
+                                    :class="{
+                                        'bg-green-100 text-green-800': (seg.cer || 0) < 0.1,
+                                        'bg-yellow-100 text-yellow-800': (seg.cer || 0) >= 0.1 && (seg.cer || 0) < 0.15,
+                                        'bg-red-100 text-red-800': (seg.cer || 0) >= 0.15
+                                    }"
+                                    x-text="((seg.cer || 0) * 100).toFixed(1) + '%'">
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 text-sm">
+                                <span class="px-2 py-1 rounded text-xs"
+                                    :class="{
+                                        'bg-green-100 text-green-800': seg.status === 'gpu_pass' || seg.status === 'exported',
+                                        'bg-red-100 text-red-800': seg.status === 'gpu_reject'
+                                    }"
+                                    x-text="seg.status">
+                                </span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function dashboard() {
+    return {
+        stats: {},
+        recent: [],
+
+        async init() {
+            await this.loadStats();
+            await this.loadRecent();
+
+            // Refresh every 10 seconds
+            setInterval(() => {
+                this.loadStats();
+                this.loadRecent();
+            }, 10000);
+        },
+
+        async loadStats() {
+            try {
+                const resp = await fetch('/api/dashboard/stats');
+                this.stats = await resp.json();
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        },
+
+        async loadRecent() {
+            try {
+                const resp = await fetch('/api/dashboard/recent?limit=10');
+                this.recent = await resp.json();
+            } catch (e) {
+                console.error('Failed to load recent:', e);
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

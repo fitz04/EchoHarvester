@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}Pipeline - EchoHarvester{% endblock %}
+{% block nav_pipeline %}bg-indigo-700{% endblock %}
+
+{% block content %}
+<div x-data="pipelinePage()" x-init="init()">
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold text-gray-800">Pipeline</h1>
+        <div class="flex space-x-3">
+            <button @click="startPipeline()" :disabled="status.state === 'running'"
+                class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                Start Pipeline
+            </button>
+            <button @click="stopPipeline()" :disabled="status.state !== 'running'"
+                class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                Stop
+            </button>
+        </div>
+    </div>
+
+    <!-- Pipeline Status -->
+    <div class="bg-white rounded-lg shadow p-6 mb-8">
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-800">Current Status</h2>
+                <p class="text-sm text-gray-500">
+                    Run ID: <span x-text="status.run_id || '-'"></span>
+                </p>
+            </div>
+            <div class="flex items-center">
+                <span class="w-3 h-3 rounded-full mr-2"
+                    :class="{
+                        'bg-green-500': status.state === 'idle' || status.state === 'completed',
+                        'bg-yellow-500 animate-pulse': status.state === 'running',
+                        'bg-red-500': status.state === 'error'
+                    }"></span>
+                <span class="text-lg font-medium capitalize" x-text="status.state || 'idle'"></span>
+            </div>
+        </div>
+
+        <!-- Stage Progress -->
+        <div class="space-y-4">
+            <template x-for="stage in stages" :key="stage.name">
+                <div class="border border-gray-200 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center">
+                            <span class="w-2 h-2 rounded-full mr-2"
+                                :class="{
+                                    'bg-green-500': getStageStatus(stage.name) === 'completed',
+                                    'bg-yellow-500 animate-pulse': getStageStatus(stage.name) === 'running',
+                                    'bg-gray-300': getStageStatus(stage.name) === 'pending'
+                                }"></span>
+                            <span class="font-medium" x-text="stage.label"></span>
+                        </div>
+                        <button @click="runStage(stage.name)" :disabled="status.state === 'running'"
+                            class="text-sm text-indigo-600 hover:text-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed">
+                            Run
+                        </button>
+                    </div>
+                    <div x-show="getStageProgress(stage.name)" class="mt-2">
+                        <div class="flex justify-between text-sm text-gray-500 mb-1">
+                            <span x-text="getStageProgress(stage.name)?.current_item || ''"></span>
+                            <span>
+                                <span x-text="getStageProgress(stage.name)?.processed || 0"></span>
+                                /
+                                <span x-text="getStageProgress(stage.name)?.total || 0"></span>
+                            </span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                                :style="'width: ' + (getStageProgress(stage.name)?.total > 0 ? (getStageProgress(stage.name).processed / getStageProgress(stage.name).total * 100) : 0) + '%'">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Live Log -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-gray-800">Live Log</h2>
+            <button @click="logs = []" class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+        </div>
+        <div class="p-4 h-64 overflow-y-auto bg-gray-900 font-mono text-sm">
+            <template x-for="(log, idx) in logs.slice(-100)" :key="idx">
+                <div class="py-1"
+                    :class="{
+                        'text-green-400': log.level === 'INFO',
+                        'text-yellow-400': log.level === 'WARNING',
+                        'text-red-400': log.level === 'ERROR',
+                        'text-gray-400': log.level === 'DEBUG'
+                    }">
+                    <span class="text-gray-500" x-text="new Date(log.timestamp * 1000).toLocaleTimeString()"></span>
+                    <span x-text="'[' + log.level + ']'"></span>
+                    <span x-text="log.message"></span>
+                </div>
+            </template>
+            <div x-show="logs.length === 0" class="text-gray-500">
+                Waiting for logs...
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function pipelinePage() {
+    return {
+        status: { state: 'idle', progress: [] },
+        logs: [],
+        stages: [
+            { name: 'metadata', label: '1. Metadata Collection' },
+            { name: 'download', label: '2. Download / Prepare' },
+            { name: 'preprocess', label: '3. CPU Preprocessing' },
+            { name: 'validate', label: '4. GPU Validation' },
+            { name: 'export', label: '5. Lhotse Export' }
+        ],
+        ws: null,
+        logWs: null,
+
+        async init() {
+            await this.loadStatus();
+            this.connectWebSocket();
+            this.connectLogWebSocket();
+        },
+
+        async loadStatus() {
+            try {
+                const resp = await fetch('/api/pipeline/status');
+                this.status = await resp.json();
+            } catch (e) {
+                console.error('Failed to load status:', e);
+            }
+        },
+
+        connectWebSocket() {
+            this.ws = new WebSocket(`ws://${window.location.host}/ws/progress`);
+            this.ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.status) {
+                    this.status = data.status;
+                }
+                if (data.event) {
+                    this.handleEvent(data);
+                }
+            };
+            this.ws.onclose = () => {
+                setTimeout(() => this.connectWebSocket(), 3000);
+            };
+        },
+
+        connectLogWebSocket() {
+            this.logWs = new WebSocket(`ws://${window.location.host}/ws/logs`);
+            this.logWs.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.event === 'log') {
+                    this.logs.push(data);
+                    if (this.logs.length > 500) {
+                        this.logs = this.logs.slice(-500);
+                    }
+                }
+            };
+            this.logWs.onclose = () => {
+                setTimeout(() => this.connectLogWebSocket(), 3000);
+            };
+        },
+
+        handleEvent(data) {
+            if (data.event === 'pipeline_start') {
+                this.status.state = 'running';
+                this.status.run_id = data.run_id;
+            } else if (data.event === 'pipeline_complete') {
+                this.status.state = data.state;
+            } else if (data.event === 'stage_start') {
+                this.status.current_stage = data.stage;
+            }
+        },
+
+        getStageStatus(name) {
+            if (this.status.state !== 'running') return 'pending';
+            if (this.status.current_stage === name) return 'running';
+            const idx = this.stages.findIndex(s => s.name === name);
+            const currentIdx = this.stages.findIndex(s => s.name === this.status.current_stage);
+            if (idx < currentIdx) return 'completed';
+            return 'pending';
+        },
+
+        getStageProgress(name) {
+            return this.status.progress?.find(p => p.stage === name);
+        },
+
+        async startPipeline() {
+            try {
+                const resp = await fetch('/api/pipeline/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (resp.ok) {
+                    this.status.state = 'running';
+                }
+            } catch (e) {
+                console.error('Failed to start pipeline:', e);
+            }
+        },
+
+        async stopPipeline() {
+            try {
+                await fetch('/api/pipeline/stop', { method: 'POST' });
+            } catch (e) {
+                console.error('Failed to stop pipeline:', e);
+            }
+        },
+
+        async runStage(name) {
+            try {
+                const resp = await fetch(`/api/pipeline/stage/${name}`, { method: 'POST' });
+                if (resp.ok) {
+                    this.status.state = 'running';
+                    this.status.current_stage = name;
+                }
+            } catch (e) {
+                console.error('Failed to run stage:', e);
+            }
+        }
+    };
+}
+</script>
+{% endblock %}
