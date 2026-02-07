@@ -1,56 +1,59 @@
 # EchoHarvester
 
-한국어 ASR(자동 음성 인식) 훈련 데이터 파이프라인
+Korean ASR (Automatic Speech Recognition) training data pipeline.
 
-유튜브 및 로컬 미디어 파일에서 한국어 자막/음성을 수집하여 고신뢰도 ASR 학습 데이터를 생성합니다.
+Collects Korean subtitles and audio from YouTube and local media files, then processes them through a 5-stage pipeline to produce high-quality ASR training data in [Lhotse Shar](https://github.com/lhotse-speech/lhotse) format.
 
-## 주요 기능
+## Features
 
-- **다양한 입력 소스 지원**
-  - YouTube 채널/플레이리스트/단일 영상
-  - 로컬 동영상/음성 파일
-  - 디렉토리 일괄 처리
+- **Multiple Input Sources**
+  - YouTube channels, playlists, and individual videos
+  - Local video/audio files
+  - Batch directory processing
 
-- **5단계 파이프라인**
-  1. 메타데이터 수집
-  2. 다운로드/준비
-  3. CPU 전처리 (강제 정렬, 자막 파싱, 정규화, SNR/VAD 필터링)
-  4. GPU 검증 (Qwen3-ASR 재전사, CER 필터링)
-  5. Lhotse Shar 내보내기
+- **5-Stage Pipeline**
+  1. **Metadata** — Collect video metadata and subtitle info
+  2. **Download** — Download media and extract audio
+  3. **Preprocess** — Forced alignment, subtitle dedup, normalization, SNR/VAD filtering
+  4. **Validate** — ASR re-transcription with Qwen3-ASR, CER-based filtering
+  5. **Export** — Lhotse Shar archive output
 
-- **강제 정렬 (Forced Alignment)**
-  - Qwen3-ForcedAligner-0.6B 기반 음성-텍스트 정밀 타임스탬프 정렬
-  - VAD 기반 청킹: Silero VAD로 침묵 구간을 감지하여 자연스러운 경계에서 오디오 분할
-  - 구두점 정규화 매칭: FA 출력과 원본 자막 간 구두점 차이를 제거하여 정확한 문자열 매칭
-  - 15분 영상 기준 테스트 결과: gpu_pass 16개 → **149개** (9.3배 향상)
+- **Forced Alignment**
+  - Qwen3-ForcedAligner-0.6B for precise speech-text timestamp alignment
+  - VAD-based chunking with Silero VAD for natural boundary detection
+  - Punctuation-normalized matching between FA output and source subtitles
 
-- **WebUI**
-  - 대시보드: 통계 및 진행 현황
-  - 소스 관리: 입력 소스 추가/삭제
-  - 파이프라인 제어: 시작/중지/개별 스테이지 실행
-  - 데이터 탐색: 처리된 세그먼트 검색/필터
+- **Transcription Correction**
+  - WaveSurfer.js waveform editor with playback controls
+  - 3-column text comparison (Original / Corrected / ASR)
+  - Live CER calculation as you edit
+  - Keyboard shortcuts for efficient review workflow
+  - Auto-advance mode after approval
 
-## 설치
+- **3-Page WebUI**
+  - **Home** — Source management + overview dashboard
+  - **Process** — Pipeline control with live progress tracking
+  - **Review** — Segment exploration + transcription correction (master-detail layout)
+
+## Installation
 
 ```bash
-# 저장소 클론
+# Clone the repository
 git clone https://github.com/fitz04/EchoHarvester.git
 cd EchoHarvester
 
-# 가상환경 생성 (권장)
+# Create virtual environment (recommended)
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 의존성 설치
+# Install dependencies
 pip install -e .
-
-# 또는 requirements.txt 사용
-pip install -r requirements.txt
 ```
 
-### 추가 요구사항
+### Prerequisites
 
-- **ffmpeg**: 오디오 처리용
+- **Python** >= 3.10
+- **ffmpeg** — required for audio processing
   ```bash
   # Ubuntu/Debian
   sudo apt install ffmpeg
@@ -58,129 +61,163 @@ pip install -r requirements.txt
   brew install ffmpeg
   ```
 
-- **CUDA** (선택): GPU 가속을 위해 CUDA 지원 PyTorch 필요
+- **CUDA** (optional) — for GPU-accelerated validation
   ```bash
   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
   ```
 
-- **macOS (Apple Silicon)**: CUDA 미지원 환경에서도 동작
-  - `faster-whisper`는 CTranslate2 기반으로 MPS(Apple GPU) 미지원
-  - `device: "auto"` 설정 시 자동으로 CPU 폴백 (int8 양자화 적용)
-  - CPU 모드에서도 Whisper medium 모델 사용 가능 (속도는 느려짐)
-  ```yaml
-  validation:
-    device: "auto"        # 자동 감지 (CUDA 없으면 CPU)
-    compute_type: "auto"  # 자동 설정 (CPU: int8, CUDA: float16)
-  ```
+- **macOS (Apple Silicon)** — works without CUDA
+  - `faster-whisper` uses CTranslate2 (no MPS support) — auto-falls back to CPU with int8 quantization
+  - Set `device: "auto"` in config for automatic detection
 
-## 사용법
+## Usage
 
-### 1. 설정 파일 작성
+### 1. Configuration
 
-`config.yaml` 파일을 편집하여 입력 소스와 설정을 구성합니다:
+Edit `config.yaml` to set up your input sources:
 
 ```yaml
 sources:
   - type: youtube_channel
     url: "https://www.youtube.com/@channel_name"
-    label: "뉴스채널"
+    label: "News Channel"
 
   - type: local_directory
     path: "/data/videos"
     pattern: "*.mp4"
-    label: "로컬영상"
+    label: "Local Videos"
 
 filters:
-  cer_threshold_manual: 0.15    # 수동자막 CER 임계값
-  cer_threshold_auto: 0.10      # 자동자막 CER 임계값
+  cer_threshold_manual: 0.15    # CER threshold for manual subtitles
+  cer_threshold_auto: 0.10      # CER threshold for auto subtitles
 
 validation:
   model: "seastar105/whisper-medium-komixv2"
-  device: "cuda"
+  device: "auto"                # auto-detect (CUDA > CPU)
 ```
 
-### 2. CLI 사용
+### 2. CLI
 
 ```bash
-# 전체 파이프라인 실행
-python -m echoharvester run --config config.yaml
+# Run the full pipeline
+echoharvester run --config config.yaml
 
-# 특정 스테이지만 실행
-python -m echoharvester run --config config.yaml --stage preprocess
+# Run a specific stage
+echoharvester run --config config.yaml --stage preprocess
 
-# 상태 확인
-python -m echoharvester status --config config.yaml
+# Check pipeline status
+echoharvester status --config config.yaml
 
-# 에러 목록 조회
-python -m echoharvester errors --config config.yaml
+# View errors
+echoharvester errors --config config.yaml
 
-# 통계 리포트 생성
-python -m echoharvester report --config config.yaml
+# Generate statistics report
+echoharvester report --config config.yaml
 ```
 
-### 3. WebUI 사용
+### 3. WebUI
 
 ```bash
-# 웹 서버 실행
-python -m echoharvester server --config config.yaml
+# Start the web server
+echoharvester server --config config.yaml
 
-# 브라우저에서 접속
+# Open in browser
 # http://127.0.0.1:8000
 ```
 
-## 프로젝트 구조
+#### Pages
+
+| Page | URL | Description |
+|------|-----|-------------|
+| **Home** | `/` | Add sources, view stats, start processing |
+| **Process** | `/process` | Monitor pipeline progress, view logs |
+| **Review** | `/review` | Browse segments, edit transcriptions, approve/reject |
+
+#### Keyboard Shortcuts (Review page)
+
+| Key | Action |
+|-----|--------|
+| `Space` | Play / Pause audio |
+| `Left/Right` | Seek 2 seconds |
+| `Ctrl+Left/Right` | Seek 5 seconds |
+| `Tab` | Next segment |
+| `Shift+Tab` | Previous segment |
+| `Enter` | Approve current segment |
+| `Ctrl+Enter` | Use ASR text + Approve |
+| `?` | Toggle shortcut help |
+
+## Project Structure
 
 ```
 echoharvester/
-├── config.py           # 설정 관리
-├── db.py               # SQLite 데이터베이스
-├── main.py             # CLI 엔트리포인트
-├── sources/            # 입력 소스 구현
-│   ├── youtube.py      # YouTube 소스
-│   ├── local_file.py   # 로컬 파일 소스
+├── config.py                # Pydantic configuration models
+├── db.py                    # SQLite state management
+├── main.py                  # CLI entry point
+├── sources/                 # Input source implementations
+│   ├── youtube.py
+│   ├── local_file.py
 │   └── local_directory.py
-├── stages/             # 파이프라인 스테이지
+├── stages/                  # Pipeline stages
 │   ├── stage1_metadata.py
 │   ├── stage2_download.py
-│   ├── stage3_preprocess.py
-│   ├── stage4_validate.py
-│   └── stage5_export.py
-├── utils/              # 유틸리티 모듈
-│   ├── forced_alignment.py  # Qwen3-ForcedAligner 강제 정렬
-│   ├── subtitle_parser.py
-│   ├── text_normalize.py
-│   ├── audio_utils.py
-│   ├── cer.py
-│   └── vad.py
-├── pipeline/           # 오케스트레이터
+│   ├── stage3_preprocess.py # CPU preprocessing (FA + VTT dedup)
+│   ├── stage4_validate.py   # ASR validation (Qwen3-ASR)
+│   └── stage5_export.py     # Lhotse Shar export
+├── utils/                   # Utility modules
+│   ├── forced_alignment.py  # Qwen3-ForcedAligner integration
+│   ├── subtitle_parser.py   # VTT/SRT parser with dedup
+│   ├── text_normalize.py    # Korean text normalization
+│   ├── audio_utils.py       # Audio conversion utilities
+│   ├── cer.py               # Character Error Rate calculation
+│   └── vad.py               # Voice Activity Detection
+├── pipeline/                # Pipeline orchestrator
 │   └── orchestrator.py
-├── api/                # FastAPI 백엔드
+├── api/                     # FastAPI backend
+│   ├── app.py
 │   └── routes/
-└── web/                # WebUI 템플릿
-    └── templates/
+│       ├── sources.py
+│       ├── pipeline.py
+│       ├── dashboard.py
+│       └── websocket.py
+└── web/                     # WebUI
+    ├── templates/
+    │   ├── base.html        # Base layout (3-page nav)
+    │   ├── home.html        # Source management + dashboard
+    │   ├── process.html     # Pipeline control
+    │   └── review.html      # Segment review + transcription
+    └── static/
 ```
 
-## 출력 형식
+## Output Format
 
-처리된 데이터는 Lhotse Shar 형식으로 출력됩니다:
+Processed data is exported in Lhotse Shar format:
 
 ```
 output/
-├── shar/               # Lhotse Shar 아카이브
+├── shar/                    # Lhotse Shar archives
 │   ├── cuts.000000.tar
 │   ├── cuts.000001.tar
 │   └── ...
-├── manifest.jsonl.gz   # CutSet 매니페스트
-└── stats.json          # 통계 정보
+├── manifest.jsonl.gz        # CutSet manifest
+└── stats.json               # Export statistics
 ```
 
-## 필터링 기준
+## Filtering Criteria
 
-- **길이**: 0.5초 ~ 30초
-- **SNR**: 최소 10dB
-- **음성 비율**: 최소 50% (VAD 기준)
-- **CER**: 수동자막 15%, 자동자막 10% 이하
+| Filter | Threshold | Description |
+|--------|-----------|-------------|
+| Duration | 0.5s – 30s | Segment length |
+| SNR | >= 10 dB | Signal-to-noise ratio |
+| Speech Ratio | >= 50% | VAD-based speech activity |
+| CER (manual subs) | <= 15% | Character Error Rate |
+| CER (auto subs) | <= 10% | Stricter for auto-generated |
 
-## 라이선스
+## API Documentation
+
+When the server is running, interactive API docs are available at:
+- Swagger UI: http://127.0.0.1:8000/docs
+- ReDoc: http://127.0.0.1:8000/redoc
+
+## License
 
 MIT License

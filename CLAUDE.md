@@ -36,6 +36,14 @@ echoharvester/
 │   ├── forced_alignment.py
 │   ├── subtitle_parser.py
 │   └── ...
+├── api/
+│   ├── app.py         # FastAPI 앱 (3페이지: /, /process, /review)
+│   └── routes/
+├── web/templates/
+│   ├── base.html      # 기본 레이아웃 (Home, Process, Review 내비)
+│   ├── home.html      # 소스 관리 + 대시보드 통합
+│   ├── process.html   # 파이프라인 제어 (수평 스테퍼)
+│   └── review.html    # 탐색 + 전사 교정 (마스터-디테일)
 config.yaml            # 파이프라인 설정
 agent.md               # 작업 지침서 + 진행 상태
 ```
