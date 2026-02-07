@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - EchoHarvester{% endblock %}
+{% block nav_dashboard %}bg-indigo-700{% endblock %}
+
+{% block content %}
+<div x-data="dashboard()" x-init="init()">
+    <h1 class="text-3xl font-bold text-gray-800 mb-8">Dashboard</h1>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="text-gray-500 text-sm">Total Sources</div>
+            <div class="text-3xl font-bold text-gray-800" x-text="stats.total_sources || 0"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="text-gray-500 text-sm">Media Items</div>
+            <div class="text-3xl font-bold text-gray-800" x-text="stats.total_media_items || 0"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="text-gray-500 text-sm">Total Segments</div>
+            <div class="text-3xl font-bold text-gray-800" x-text="stats.total_segments || 0"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="text-gray-500 text-sm">Passed Duration</div>
+            <div class="text-3xl font-bold text-indigo-600">
+                <span x-text="(stats.passed_duration_hours || 0).toFixed(1)"></span>
+                <span class="text-lg">hrs</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <!-- Segment Status -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Segment Status</h2>
+            <div class="space-y-3">
+                <template x-for="(count, status) in stats.segment_status" :key="status">
+                    <div class="flex items-center">
+                        <div class="w-24 text-sm text-gray-600" x-text="status"></div>
+                        <div class="flex-1 bg-gray-200 rounded-full h-4 mx-2">
+                            <div class="h-4 rounded-full"
+                                :class="{
+                                    'bg-green-500': status.includes('pass') || status === 'exported',
+                                    'bg-blue-500': status === 'approved',
+                                    'bg-red-400': status.includes('reject') || status === 'error',
+                                    'bg-yellow-400': status.includes('processing'),
+                                    'bg-gray-400': status === 'pending'
+                                }"
+                                :style="'width: ' + (stats.total_segments > 0 ? (count / stats.total_segments * 100) : 0) + '%'">
+                            </div>
+                        </div>
+                        <div class="w-16 text-right text-sm font-medium" x-text="count"></div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- CER Distribution (All Validated) -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">CER Distribution <span class="text-sm font-normal text-gray-500">(all validated)</span></h2>
+            <div class="space-y-3">
+                <template x-for="range in cerRangeOrder" :key="range">
+                    <div class="flex items-center" x-show="(stats.cer_distribution_all || {})[range]">
+                        <div class="w-20 text-sm text-gray-600" x-text="range"></div>
+                        <div class="flex-1 bg-gray-200 rounded-full h-4 mx-2">
+                            <div class="h-4 rounded-full"
+                                :class="cerBarColor(range)"
+                                :style="'width: ' + (maxCerCount > 0 ? ((stats.cer_distribution_all || {})[range] || 0) / maxCerCount * 100 : 0) + '%'">
+                            </div>
+                        </div>
+                        <div class="w-16 text-right text-sm font-medium" x-text="(stats.cer_distribution_all || {})[range] || 0"></div>
+                    </div>
+                </template>
+                <div class="text-sm text-gray-500 mt-2">
+                    Average CER: <span class="font-medium" x-text="((stats.avg_cer || 0) * 100).toFixed(2) + '%'"></span>
+                    | Total: <span class="font-medium" x-text="cerTotal"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row 2 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <!-- Reject Reasons -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Reject Reasons
+                <span class="text-sm font-normal text-gray-500">(<span x-text="totalRejects"></span> total)</span>
+            </h2>
+            <div class="space-y-3" x-show="Object.keys(stats.reject_reasons || {}).length > 0">
+                <template x-for="reason in Object.keys(stats.reject_reasons || {}).sort((a,b) => (stats.reject_reasons[b] || 0) - (stats.reject_reasons[a] || 0))" :key="reason">
+                    <div class="flex items-center">
+                        <div class="w-32 text-sm text-gray-600 truncate" x-text="reason" :title="reason"></div>
+                        <div class="flex-1 bg-gray-200 rounded-full h-4 mx-2">
+                            <div class="bg-red-400 h-4 rounded-full"
+                                :style="'width: ' + (totalRejects > 0 ? (stats.reject_reasons[reason] / totalRejects * 100) : 0) + '%'">
+                            </div>
+                        </div>
+                        <div class="w-16 text-right text-sm font-medium" x-text="stats.reject_reasons[reason]"></div>
+                    </div>
+                </template>
+            </div>
+            <div x-show="Object.keys(stats.reject_reasons || {}).length === 0" class="text-gray-400 text-sm">
+                No reject data available.
+            </div>
+        </div>
+
+        <!-- Per-Media Summary -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Per-Media Summary</h2>
+            <div class="space-y-4" x-show="(stats.per_media || []).length > 0">
+                <template x-for="media in (stats.per_media || [])" :key="media.media_id">
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-700 font-medium truncate max-w-[200px]"
+                                x-text="media.media_title || media.media_id" :title="media.media_title || media.media_id"></span>
+                            <span class="text-gray-500 text-xs">
+                                CER <span x-text="((media.avg_cer || 0) * 100).toFixed(1)"></span>%
+                                | <span x-text="(media.pass_duration / 60).toFixed(1)"></span>min pass
+                            </span>
+                        </div>
+                        <div class="flex bg-gray-200 rounded-full h-4 overflow-hidden">
+                            <div class="bg-green-500 h-4"
+                                :style="'width: ' + (media.total > 0 ? (media.passed / media.total * 100) : 0) + '%'"
+                                :title="media.passed + ' passed'">
+                            </div>
+                            <div class="bg-red-400 h-4"
+                                :style="'width: ' + (media.total > 0 ? (media.rejected / media.total * 100) : 0) + '%'"
+                                :title="media.rejected + ' rejected'">
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-xs text-gray-500 mt-0.5">
+                            <span x-text="media.passed + ' pass / ' + media.rejected + ' reject'"></span>
+                            <span x-text="media.total + ' total'"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div x-show="(stats.per_media || []).length === 0" class="text-gray-400 text-sm">
+                No media data available.
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Segments -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-800">Recent Segments</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Media</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Text</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CER</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    <template x-for="seg in recent" :key="seg.id">
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 text-sm font-mono text-gray-500" x-text="seg.id.substring(0, 20) + '...'"></td>
+                            <td class="px-6 py-4 text-sm text-gray-800" x-text="(seg.media_title || '').substring(0, 30)"></td>
+                            <td class="px-6 py-4 text-sm text-gray-600" x-text="(seg.normalized_text || '').substring(0, 40) + '...'"></td>
+                            <td class="px-6 py-4 text-sm">
+                                <span class="px-2 py-1 rounded text-xs"
+                                    :class="{
+                                        'bg-green-100 text-green-800': (seg.cer || 0) < 0.1,
+                                        'bg-yellow-100 text-yellow-800': (seg.cer || 0) >= 0.1 && (seg.cer || 0) < 0.15,
+                                        'bg-red-100 text-red-800': (seg.cer || 0) >= 0.15
+                                    }"
+                                    x-text="((seg.cer || 0) * 100).toFixed(1) + '%'">
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 text-sm">
+                                <span class="px-2 py-1 rounded text-xs"
+                                    :class="{
+                                        'bg-green-100 text-green-800': seg.status === 'gpu_pass' || seg.status === 'exported',
+                                        'bg-blue-100 text-blue-800': seg.status === 'approved',
+                                        'bg-red-100 text-red-800': seg.status === 'gpu_reject'
+                                    }"
+                                    x-text="seg.status">
+                                </span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function dashboard() {
+    return {
+        stats: {},
+        recent: [],
+        cerRangeOrder: ['0-5%', '5-10%', '10-15%', '15-20%', '20-30%', '30-50%', '50%+'],
+
+        get totalRejects() {
+            const reasons = this.stats.reject_reasons || {};
+            return Object.values(reasons).reduce((a, b) => a + b, 0);
+        },
+
+        get maxCerCount() {
+            const dist = this.stats.cer_distribution_all || {};
+            return Math.max(...Object.values(dist), 0);
+        },
+
+        get cerTotal() {
+            const dist = this.stats.cer_distribution_all || {};
+            return Object.values(dist).reduce((a, b) => a + b, 0);
+        },
+
+        cerBarColor(range) {
+            const colors = {
+                '0-5%': 'bg-green-500',
+                '5-10%': 'bg-green-400',
+                '10-15%': 'bg-yellow-400',
+                '15-20%': 'bg-yellow-500',
+                '20-30%': 'bg-orange-400',
+                '30-50%': 'bg-orange-500',
+                '50%+': 'bg-red-500'
+            };
+            return colors[range] || 'bg-gray-400';
+        },
+
+        async init() {
+            await this.loadStats();
+            await this.loadRecent();
+
+            // Refresh every 10 seconds
+            setInterval(() => {
+                this.loadStats();
+                this.loadRecent();
+            }, 10000);
+        },
+
+        async loadStats() {
+            try {
+                const resp = await fetch('/api/dashboard/stats');
+                this.stats = await resp.json();
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        },
+
+        async loadRecent() {
+            try {
+                const resp = await fetch('/api/dashboard/recent?limit=10');
+                this.recent = await resp.json();
+            } catch (e) {
+                console.error('Failed to load recent:', e);
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

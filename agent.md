@@ -1,0 +1,288 @@
+# EchoHarvester - Agent 작업 지침서
+
+## 프로젝트 개요
+한국어 ASR 학습 데이터 파이프라인. YouTube/로컬 미디어에서 음성 데이터를 수집·처리·검증하여 Lhotse Shar 포맷으로 출력.
+
+## 작업 원칙
+1. **각 단계별 순차 진행** - 한 단계를 완료한 후 다음 단계로 이동
+2. **진행상황 문서화** - 이 파일에 진행상황을 항상 기록하여 세션 중단 시 이어서 작업 가능
+3. **에러 기록** - 발생한 에러와 해결 방법을 기록
+4. **테스트 후 진행** - 각 단계 완료 후 동작 확인
+
+## 환경 정보
+- **OS**: macOS (Apple Silicon)
+- **GPU**: CUDA 미지원 → `device: "auto"` 사용 (자동으로 CPU 폴백)
+- **Python**: 3.13.5 (venv: `./venv/bin/python`)
+- **가상환경 활성화**: `source venv/bin/activate`
+- **faster-whisper**: CTranslate2 기반 → MPS 미지원, CPU(int8/float32)만 가능
+
+---
+
+## 작업 로드맵
+
+### Phase 1: 환경 설정 및 기본 검증
+- [x] 코드 구조 파악
+- [x] MacBook GPU 대안 적용 (device: "auto" + CPU 폴백)
+- [x] 의존성 설치 (`pip install -e ".[dev]"` → venv/bin/python 3.13)
+- [x] ffmpeg 8.0, yt-dlp 2026.02.04 확인
+- [x] 기본 import 테스트 (전 모듈 OK)
+- [x] config.yaml 검증 테스트 (sources None 버그 수정 포함)
+
+### Phase 2: E2E 파이프라인 테스트 (소규모)
+- [x] 테스트용 YouTube 영상 1개로 전체 파이프라인 실행
+  - [x] Stage 1: 메타데이터 수집
+  - [x] Stage 2: 다운로드
+  - [x] Stage 3: CPU 전처리 (FA + VTT dedup 포함)
+  - [x] Stage 4: GPU 검증 (Qwen3-ASR-1.7B on MPS)
+  - [x] Stage 5: Lhotse 내보내기
+- [x] 각 스테이지별 에러 확인 및 수정
+- [x] 출력 데이터 검증
+
+### Phase 3: 단위 테스트 작성
+- [x] tests/ 디렉토리 구조 생성
+- [x] utils/ 모듈 테스트 (text_normalize, cer, subtitle_parser, audio_utils, forced_alignment, retry)
+- [x] stages/ 모듈 테스트 (base, metadata, export)
+- [x] config 로딩 테스트
+- [x] DB 테스트 (CRUD, 마이그레이션, 트랜잭션, 통계)
+- [x] sources/ 테스트 (factory, local_file, local_directory, YouTube URL 파싱)
+- [x] pipeline orchestrator 테스트
+
+### Phase 4: WebUI 고도화
+- [x] 세그먼트 오디오 미리듣기
+- [x] 필터링/검색 강화
+- [x] 에러 시각화 개선
+
+### Phase 5: 전사 교정 도구 (Transcribe Page)
+- [x] DB: APPROVED 상태 추가 + 마이그레이션
+- [x] API: 전사 엔드포인트 4개 (media list, segments, approve, reject)
+- [x] 라우트: /transcribe 페이지 + 내비게이션 링크
+- [x] transcribe.html: wavesurfer.js 파형 에디터 + 3열 텍스트 비교 + 키보드 단축키
+- [x] explore.html: "Whisper Text" → "ASR Text" + "Open in Transcribe" 링크
+- [x] dashboard.html: approved 상태 색상 매핑
+- [x] stage5_export.py: approved 세그먼트 내보내기 포함
+- [x] cer.py: docstring 업데이트
+
+### Phase 6: 안정성 및 성능
+- [x] 에러 핸들링/리트라이 로직 강화
+- [x] 대규모 데이터 처리 최적화
+- [x] 로깅 개선
+
+---
+
+## 현재 진행 상태
+
+### Phase 1 완료 - 환경 설정 및 기본 검증
+**시작일**: 2026-02-06
+**완료일**: 2026-02-06
+**상태**: 완료
+
+#### 완료 항목
+- [x] 코드 구조 전체 파악 완료
+- [x] GPU 대안 적용: `device: "auto"` 옵션 추가, macOS에서 CPU+int8 자동 폴백
+- [x] venv 생성 (Python 3.13.5) + 전체 의존성 설치
+- [x] ffmpeg 8.0 + yt-dlp 2026.02.04 확인
+- [x] 전체 모듈 import 테스트 통과
+- [x] config.yaml 로딩 테스트 통과
+
+### 현재 작업: Phase 2 - E2E 파이프라인 테스트
+**시작일**: 2026-02-06
+**상태**: 완료 (Stage 1-5 전체 E2E 통과)
+
+#### 테스트 결과 (Run 13, YouTube bynU81TSbDU)
+
+**Stage 3 (CPU 전처리):**
+- 입력: VTT 자막 706 cues → dedup 후 354 → merge/split 후 217 세그먼트
+- FA(Qwen3-ForcedAligner-0.6B, CPU): 97초 소요
+- 결과: 96 cpu_pass / 121 cpu_reject (too_short=105, low_snr=8, low_speech_ratio=8)
+
+**Stage 4 (GPU 검증, Qwen3-ASR-1.7B on MPS):**
+- 96개 세그먼트, 6배치, 85.7초 소요
+- **16 gpu_pass / 80 gpu_reject** (pass rate: 16.7%)
+- CER 분포: 0-0.10=9, 0.10-0.15=7, 0.15-0.30=9, 0.30-0.50=8, 0.50+=63
+- CER 전체: avg=0.677, min=0.000, max=1.826
+
+**분석:**
+- CER < 0.15 (pass): 자막-ASR 완벽 일치, FA 정확
+- CER 0.15-0.30 (near-miss 9개): 내용 맞지만 어미 차이/숫자 표기/끝부분 잘림
+- CER 0.50+ (63개): FA 타임스탬프 완전 잘못됨, ASR이 다른 부분 음성 인식
+
+**Stage 5 (Lhotse Shar 내보내기):**
+- 16개 gpu_pass 세그먼트 → Lhotse Shar + manifest.jsonl.gz
+- 총 103.5초 (1.7분) 오디오
+- CER 분포: 0-5%=6, 5-10%=3, 10-15%=7
+- 평균 CER: 0.111, 평균 세그먼트 길이: 6.5초
+- 출력: `output/shar/` (cuts + recording tar), `output/manifest.jsonl.gz`, `output/stats.json`
+- SharWriter API 변경 (lhotse 1.32.2): `fields={"recording": "wav"}` 필수
+
+**향후 개선 방향:**
+- 숫자/어미 정규화 추가로 CER 정확도 향상
+- 대규모 데이터셋 테스트
+
+### Phase 2.5: FA 정확도 개선
+**시작일**: 2026-02-06
+**완료일**: 2026-02-06
+**상태**: 완료
+
+**문제**: FA 텍스트 매칭에서 구두점(`.`, `?` 등) 불일치로 exact match=0 → 타임스탬프 부정확
+**해결**: `_strip_for_matching()`에서 `\W` 패턴으로 구두점+공백 제거, VAD 기반 청킹 적용
+
+#### Before vs After 비교 (YouTube bynU81TSbDU, 15분 영상)
+
+| 지표 | Before | After | 변화 |
+|------|--------|-------|------|
+| FA exact match | 0/217 | **217/217** | 100% |
+| cpu_pass | 96 | **185** | +92.7% |
+| cpu_reject | 121 | 32 | -73.6% |
+| gpu_pass | 16 | **149** | **+831%** |
+| gpu_reject | 80 | 36 | -55.0% |
+| Pass rate (전체) | 7.4% | **68.7%** | 9.3x |
+| CER avg | 0.677 | **0.121** | -82.1% |
+| CER 0-0.10 | 9 | **136** | +1411% |
+| CER 0.50+ | 63 | **13** | -79.4% |
+
+**핵심 교훈**: FA 모델(Qwen3-ForcedAligner)은 구두점을 출력하지 않으므로, 매칭 시 원본 텍스트에서도 구두점을 제거해야 정확한 문자열 매칭이 가능
+
+#### 발생한 이슈 및 해결
+
+| 날짜 | 이슈 | 해결 |
+|------|------|------|
+| 2026-02-06 | macOS에서 CUDA 사용 불가 | device: "auto" 자동 감지 + CPU 폴백 구현 |
+| 2026-02-06 | config.yaml에서 sources 주석처리 시 None → ValidationError | field_validator로 None → [] 변환 추가 |
+| 2026-02-06 | YouTube VTT 롤링 디스플레이로 텍스트 3중복 | VTT dedup 파서 구현 (706→354 cues) |
+| 2026-02-06 | 자막 타임스탬프 부정확 | Qwen3-ForcedAligner-0.6B 강제 정렬 통합 |
+| 2026-02-06 | MPS 메모리 부족으로 시스템 크래시 | FA→CPU, 모델 명시적 unload, ASR만 MPS 사용 |
+| 2026-02-06 | 로그 부족으로 진행상황 파악 어려움 | Stage 3/4 배치별 상세 로그 + CER 분포 추가 |
+| 2026-02-06 | FA 구두점 불일치로 exact match=0 | `_strip_for_matching()`에서 `\W` 패턴으로 제거 |
+| 2026-02-06 | Pass 2 per-segment re-alignment 역효과 | Pass 2 제거, VAD 청킹 + 구두점 수정만 적용 |
+| 2026-02-06 | 재실행 시 normalized_text가 original_text와 불일치 (stale) | add_segment UPSERT에서 original_text 변경 시 normalized_text/cer NULL 리셋 + Stage4에 일관성 검증 추가 |
+
+### Phase 4: WebUI 고도화
+**시작일**: 2026-02-06
+**완료일**: 2026-02-06
+**상태**: 완료
+
+#### 완료 항목
+
+**Task 1: 세그먼트 오디오 미리듣기**
+- `GET /api/dashboard/segments/{segment_id}/audio` 엔드포인트 추가 (FileResponse, DB에서 audio_path 조회)
+- explore.html 모달 `<audio>` src를 API 경로로 변경 + `:key` 바인딩으로 리로드 강제
+- 테이블에 인라인 재생/정지 버튼 추가 (`playInline()` + `currentAudio` 상태)
+
+**Task 2: 필터링/검색 강화**
+- `list_segments` 엔드포인트에 파라미터 추가: cer_min/max, duration_min/max, snr_min/max, text_search, reject_reason, sort_by, sort_order
+- `GET /api/dashboard/segments/filter-options` 엔드포인트 추가 (distinct media_ids, reject_reasons 프리픽스, 범위값)
+- explore.html 필터 패널 3행 구조로 확장 (Status/Media/Reject/Text, CER/Duration/SNR/Sort, Search/Reset/Limit)
+- `resetFilters()` 메서드 추가, `loadFilterOptions()` init 시 호출
+
+**Task 3: 에러 시각화 개선**
+- `db.py get_stats()` 확장: reject_reasons (프리픽스 정규화), per_media (pass/reject/avg_cer/pass_duration), cer_distribution_all (7단계 세밀 분포)
+- dashboard.html CER Distribution 차트 개선: 전체 validated 세그먼트, 범위별 색상 차등 (green→yellow→orange→red), maxCount 기준 상대 너비
+- Charts Row 2 추가: Reject Reasons 수평 바 차트, Per-Media Summary 스택 바 + 통계
+- Alpine.js computed: totalRejects, maxCerCount, cerTotal, cerBarColor()
+
+### Phase 5: 전사 교정 도구 (Transcribe Page)
+**시작일**: 2026-02-06
+**완료일**: 2026-02-06
+**상태**: 완료
+
+#### 변경 파일
+- `echoharvester/db.py`: APPROVED 상태 enum + `_migrate_schema()` (approved_at, approved_by 컬럼) + get_stats/get_recent_segments에 approved 포함
+- `echoharvester/api/routes/dashboard.py`: 전사 API 4개 (GET transcribe/media, GET transcribe/segments/{media_id}, PUT approve, PUT reject)
+- `echoharvester/api/app.py`: `/transcribe` 라우트 추가
+- `echoharvester/web/templates/base.html`: 내비게이션에 "Transcribe" 링크 추가
+- `echoharvester/web/templates/transcribe.html`: 전사 교정 UI (wavesurfer.js v7 파형 에디터, Alpine.js, 3열 텍스트 비교, 키보드 단축키, 세그먼트 스트립, 미디어 사이드바)
+- `echoharvester/web/templates/explore.html`: "Whisper Text" → "ASR Text", approved 상태 색상, "Open in Transcribe" 링크
+- `echoharvester/web/templates/dashboard.html`: approved 상태 색상 매핑 (파란색)
+- `echoharvester/stages/stage5_export.py`: approved 세그먼트도 내보내기에 포함
+- `echoharvester/utils/cer.py`: docstring "whisper transcription" → "ASR transcription"
+
+#### 주요 기능
+- wavesurfer.js v7 ESM으로 파형 표시 + 재생 제어
+- 실시간 CER 계산 (JavaScript Levenshtein distance)
+- 키보드 단축키: Space(재생), Tab(다음), Enter(승인), Ctrl+Enter(ASR 사용+승인)
+- URL 상태 관리 (media_id + segment_id → 새로고침 시 복귀)
+- 자동 전진 모드 (approve 후 다음 세그먼트 자동 이동)
+
+### Phase 3: 단위 테스트 작성
+**시작일**: 2026-02-06
+**완료일**: 2026-02-06
+**상태**: 완료
+
+#### 테스트 결과: 248 passed, 1 skipped, 0 failed
+
+#### 테스트 파일 구조
+```
+tests/
+├── conftest.py              # 공유 fixtures (DB, config, 샘플 오디오/자막)
+├── test_text_normalize.py   # 텍스트 정규화 (38 tests)
+├── test_cer.py              # CER 계산 (18 tests)
+├── test_subtitle_parser.py  # 자막 파싱 (23 tests)
+├── test_audio_utils.py      # 오디오 유틸리티 (15 tests)
+├── test_forced_alignment.py # FA 유틸리티 (13 tests)
+├── test_config.py           # 설정 관리 (16 tests)
+├── test_db.py               # DB CRUD/트랜잭션/통계 (27 tests)
+├── test_sources.py          # 소스 클래스 (17 tests)
+├── test_stages.py           # 스테이지 기본 클래스 (7 tests)
+├── test_pipeline.py         # 파이프라인 오케스트레이터 (11 tests)
+└── test_retry.py            # 리트라이 유틸리티 (8 tests)
+```
+
+#### 커버리지 (주요 모듈)
+- `utils/text_normalize.py`: 99%
+- `utils/cer.py`: 85%
+- `utils/subtitle_parser.py`: 80%
+- `utils/retry.py`: 98%
+- `config.py`: 84%
+- `db.py`: 93%
+- `pipeline/orchestrator.py`: 82%
+- `sources/base.py`: 96%
+- `stages/base.py`: 94%
+
+#### 발견 및 수정된 버그
+- `text_normalize.py`: 유니코드 따옴표(`\u201c\u201d`) 정규화 regex에 실제 유니코드 포인트 대신 ASCII `"` 사용 → 수정 완료
+
+### Phase 6: 안정성 및 성능
+**시작일**: 2026-02-06
+**완료일**: 2026-02-06
+**상태**: 완료
+
+#### 변경 사항
+
+**에러 핸들링/리트라이**
+- `echoharvester/utils/retry.py`: 범용 `retry`/`async_retry` 데코레이터 추가 (지수 백오프, 콜백)
+- `echoharvester/utils/audio_utils.py`: `convert_to_wav()`에 `max_retries` 파라미터 + 재시도 로직
+- `echoharvester/stages/stage4_validate.py`: 모델 초기화 3회 재시도 + GC 정리
+- `echoharvester/stages/stage2_download.py`: 에러 로그에 예외 타입 포함 + exc_info 추가
+- `echoharvester/stages/stage3_preprocess.py`: 에러 로그에 예외 타입 포함 + exc_info 추가
+
+**로깅 개선**
+- `echoharvester/stages/base.py`: 스테이지 시작/완료 타이밍 로그 + elapsed_sec 통계 반환
+- `echoharvester/db.py`: DB 연결/해제 로그 추가
+- `echoharvester/pipeline/orchestrator.py`: 에러 로그에 예외 타입 포함
+
+**대규모 데이터 최적화**
+- `echoharvester/db.py`: WAL 저널 모드 + busy_timeout=5000ms (동시 읽기 성능 향상)
+- `echoharvester/db.py`: `bulk_update_segments()` 500건 단위 청크 분할 (SQLite 변수 제한 방지)
+
+---
+
+## 기술 노트
+
+### MacBook에서 GPU/모델 관리
+- `faster-whisper`는 CTranslate2 기반으로 **MPS(Apple GPU) 미지원**
+- macOS에서는 `device: "cpu"` + `compute_type: "int8"` 조합이 최적
+- `device: "auto"` 설정 시 자동으로 CUDA > CPU 순으로 폴백
+- Silero VAD는 PyTorch 기반이지만 CPU로도 충분히 빠름
+- **Qwen3-ASR-1.7B**: MPS bfloat16 동작 확인 (M3 Pro 18GB)
+- **Qwen3-ForcedAligner-0.6B**: CPU float32 사용 (MPS 메모리 충돌 방지)
+- **중요**: FA와 ASR을 동시에 MPS 로드하면 메모리 부족으로 시스템 크래시 발생
+  → FA를 CPU로 강제하고 완료 후 명시적 unload 필수
+
+### 주요 설정 파일
+- `config.yaml`: 파이프라인 설정 (소스, 필터링, GPU 등)
+- `pyproject.toml`: 패키지 의존성
+- `echoharvester/config.py`: Pydantic 설정 모델
+
+### 파이프라인 상태 관리
+- SQLite DB에 모든 상태 저장 → 중단 후 재개 가능
+- `auto_resume: true` 설정으로 자동 재개 지원
