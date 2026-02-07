@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+
+{% block title %}Process - EchoHarvester{% endblock %}
+{% block nav_process %}bg-indigo-700{% endblock %}
+
+{% block content %}
+<div x-data="processPage()" x-init="init()">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-800">Process</h1>
+        <div class="flex space-x-3">
+            <button @click="startPipeline()" :disabled="status.state === 'running'"
+                class="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                </svg>
+                Start All
+            </button>
+            <button @click="stopPipeline()" :disabled="status.state !== 'running'"
+                class="bg-red-600 text-white px-5 py-2 rounded-lg hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                Stop
+            </button>
+        </div>
+    </div>
+
+    <!-- Completion Banner -->
+    <div x-show="pipelineStats && status.state !== 'running'" x-cloak
+        class="mb-6 rounded-xl p-6 text-white"
+        style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%)">
+        <div class="flex items-center justify-between flex-wrap gap-4">
+            <div>
+                <h2 class="text-xl font-bold">Pipeline Complete</h2>
+                <p class="text-sm opacity-80">Run #<span x-text="pipelineStats?.run_id"></span></p>
+            </div>
+            <div class="flex space-x-8 text-center">
+                <div>
+                    <div class="text-2xl font-bold" x-text="getSummaryTotalTime()"></div>
+                    <div class="text-xs opacity-80">Total Time</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold" x-text="getSummaryTotalSegments()"></div>
+                    <div class="text-xs opacity-80">Segments</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold" x-text="getSummaryPassRate()"></div>
+                    <div class="text-xs opacity-80">Pass Rate</div>
+                </div>
+            </div>
+            <a href="/review"
+                class="px-6 py-3 bg-white text-indigo-600 font-medium rounded-lg hover:bg-indigo-50 transition">
+                Review Results &rarr;
+            </a>
+        </div>
+    </div>
+
+    <!-- Horizontal Stepper -->
+    <div class="bg-white rounded-xl shadow p-6 mb-6">
+        <div class="flex items-center justify-between">
+            <template x-for="(stage, idx) in stages" :key="stage.name">
+                <div class="flex items-center" :class="{ 'flex-1': idx < stages.length - 1 }">
+                    <!-- Step circle -->
+                    <div class="flex flex-col items-center relative">
+                        <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300"
+                            :class="{
+                                'bg-green-500 text-white': getStageStatus(stage.name) === 'completed',
+                                'bg-indigo-600 text-white ring-4 ring-indigo-200 animate-pulse': getStageStatus(stage.name) === 'running',
+                                'bg-red-500 text-white': getStageStatus(stage.name) === 'error',
+                                'bg-gray-200 text-gray-500': getStageStatus(stage.name) === 'pending'
+                            }">
+                            <template x-if="getStageStatus(stage.name) === 'completed'">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            </template>
+                            <template x-if="getStageStatus(stage.name) === 'error'">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </template>
+                            <template x-if="getStageStatus(stage.name) === 'running'">
+                                <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                </svg>
+                            </template>
+                            <template x-if="getStageStatus(stage.name) === 'pending'">
+                                <span x-text="idx + 1"></span>
+                            </template>
+                        </div>
+                        <div class="mt-2 text-xs font-medium text-center whitespace-nowrap"
+                            :class="{
+                                'text-green-600': getStageStatus(stage.name) === 'completed',
+                                'text-indigo-600': getStageStatus(stage.name) === 'running',
+                                'text-red-600': getStageStatus(stage.name) === 'error',
+                                'text-gray-400': getStageStatus(stage.name) === 'pending'
+                            }"
+                            x-text="stage.label">
+                        </div>
+                        <div x-show="completedStages[stage.name]?.elapsed_sec != null"
+                            class="text-xs text-gray-400 mt-0.5"
+                            x-text="formatElapsed(completedStages[stage.name]?.elapsed_sec)">
+                        </div>
+                    </div>
+                    <!-- Connector line -->
+                    <div x-show="idx < stages.length - 1"
+                        class="flex-1 h-0.5 mx-3 mt-[-1.5rem] transition-all duration-300"
+                        :class="{
+                            'bg-green-500': getStageStatus(stage.name) === 'completed',
+                            'bg-indigo-300': getStageStatus(stage.name) === 'running',
+                            'bg-gray-200': getStageStatus(stage.name) === 'pending' || getStageStatus(stage.name) === 'error'
+                        }">
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Active Stage Detail -->
+    <template x-for="stage in stages" :key="'detail-' + stage.name">
+        <div x-show="getStageStatus(stage.name) === 'running'" x-cloak
+            class="bg-white rounded-xl shadow p-6 mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold text-gray-800">
+                    <span class="text-indigo-600" x-text="stage.label"></span> — Running
+                </h3>
+                <span class="text-sm text-gray-500"
+                    x-text="getStageProgress(stage.name)?.current_item || ''"></span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-3">
+                <div class="h-3 rounded-full bg-indigo-600 transition-all duration-300"
+                    :style="'width: ' + getProgressPercent(stage.name) + '%'"></div>
+            </div>
+            <div class="flex justify-between text-sm text-gray-500 mt-2">
+                <span x-text="(getStageProgress(stage.name)?.processed || 0) + ' / ' + (getStageProgress(stage.name)?.total || '?')"></span>
+                <span x-text="getProgressPercent(stage.name) + '%'"></span>
+            </div>
+        </div>
+    </template>
+
+    <!-- Completed Stages (Accordion) -->
+    <div x-show="Object.keys(completedStages).length > 0" x-cloak class="bg-white rounded-xl shadow mb-6">
+        <button @click="showCompleted = !showCompleted"
+            class="w-full px-6 py-4 flex justify-between items-center text-left hover:bg-gray-50 transition">
+            <h3 class="font-semibold text-gray-800">Completed Stages</h3>
+            <svg class="w-5 h-5 text-gray-400 transition-transform" :class="{ 'rotate-180': showCompleted }"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        </button>
+        <div x-show="showCompleted" x-cloak class="px-6 pb-4 space-y-3">
+            <template x-for="stage in stages" :key="'comp-' + stage.name">
+                <div x-show="completedStages[stage.name]"
+                    class="flex items-center justify-between p-3 rounded-lg"
+                    :class="completedStages[stage.name]?._error ? 'bg-red-50' : 'bg-green-50'">
+                    <div class="flex items-center gap-2">
+                        <svg x-show="!completedStages[stage.name]?._error" class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        <svg x-show="completedStages[stage.name]?._error" class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                        <span class="text-sm font-medium" x-text="stage.label"></span>
+                        <span class="text-xs text-gray-400" x-text="formatElapsed(completedStages[stage.name]?.elapsed_sec)"></span>
+                    </div>
+                    <div class="flex gap-2 text-xs">
+                        <span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700"
+                            x-text="(completedStages[stage.name]?.processed || 0) + ' processed'"></span>
+                        <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700"
+                            x-text="(completedStages[stage.name]?.passed || 0) + ' passed'"></span>
+                        <span x-show="completedStages[stage.name]?.failed > 0"
+                            class="px-2 py-0.5 rounded-full bg-red-100 text-red-700"
+                            x-text="(completedStages[stage.name]?.failed || 0) + ' failed'"></span>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Advanced: Individual Stage Run -->
+    <div class="bg-white rounded-xl shadow mb-6">
+        <button @click="showAdvanced = !showAdvanced"
+            class="w-full px-6 py-4 flex justify-between items-center text-left hover:bg-gray-50 transition">
+            <h3 class="text-sm font-medium text-gray-500">Advanced: Run Individual Stages</h3>
+            <svg class="w-5 h-5 text-gray-400 transition-transform" :class="{ 'rotate-180': showAdvanced }"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        </button>
+        <div x-show="showAdvanced" x-cloak class="px-6 pb-4">
+            <div class="flex flex-wrap gap-2">
+                <template x-for="stage in stages" :key="'adv-' + stage.name">
+                    <button @click="runStage(stage.name)" :disabled="status.state === 'running'"
+                        class="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        x-text="stage.label">
+                    </button>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Log Panel (collapsed by default) -->
+    <div class="bg-white rounded-xl shadow">
+        <button @click="showLogs = !showLogs"
+            class="w-full px-6 py-4 flex justify-between items-center text-left hover:bg-gray-50 transition">
+            <div class="flex items-center gap-3">
+                <h3 class="font-semibold text-gray-800">Logs</h3>
+                <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500"
+                    x-text="logs.length + ' entries'"></span>
+            </div>
+            <div class="flex items-center gap-3">
+                <label x-show="showLogs" @click.stop class="flex items-center text-sm text-gray-500 cursor-pointer">
+                    <input type="checkbox" x-model="autoScroll" class="mr-1.5 rounded">
+                    Auto-scroll
+                </label>
+                <button x-show="showLogs" @click.stop="logs = []" class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+                <svg class="w-5 h-5 text-gray-400 transition-transform" :class="{ 'rotate-180': showLogs }"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+            </div>
+        </button>
+        <div x-show="showLogs" x-cloak>
+            <div x-ref="logPanel" class="px-4 pb-4 h-72 overflow-y-auto bg-gray-900 rounded-b-xl font-mono text-sm">
+                <template x-for="(log, idx) in logs.slice(-200)" :key="idx">
+                    <div class="py-1"
+                        :class="{
+                            'text-green-400': log.level === 'INFO',
+                            'text-yellow-400': log.level === 'WARNING',
+                            'text-red-400': log.level === 'ERROR',
+                            'text-gray-400': log.level === 'DEBUG'
+                        }">
+                        <span class="text-gray-500" x-text="new Date(log.timestamp * 1000).toLocaleTimeString()"></span>
+                        <span x-text="'[' + log.level + ']'"></span>
+                        <span x-text="log.message"></span>
+                    </div>
+                </template>
+                <div x-show="logs.length === 0" class="text-gray-500 py-4">
+                    Waiting for logs...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Empty state: no sources -->
+    <div x-show="noSources" x-cloak class="mt-8 text-center py-12">
+        <svg class="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+        </svg>
+        <p class="text-gray-500 mb-2">No sources added yet.</p>
+        <a href="/" class="text-indigo-600 hover:text-indigo-800 font-medium">Go to Home to add sources &rarr;</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function processPage() {
+    return {
+        status: { state: 'idle', progress: [] },
+        logs: [],
+        completedStages: {},
+        pipelineStats: null,
+        autoScroll: true,
+        showLogs: false,
+        showCompleted: false,
+        showAdvanced: false,
+        noSources: false,
+        stages: [
+            { name: 'metadata', label: 'Metadata' },
+            { name: 'download', label: 'Download' },
+            { name: 'preprocess', label: 'Preprocess' },
+            { name: 'validate', label: 'Validate' },
+            { name: 'export', label: 'Export' }
+        ],
+        ws: null,
+        logWs: null,
+
+        async init() {
+            await this.loadStatus();
+            await this.checkSources();
+            this.connectWebSocket();
+            this.connectLogWebSocket();
+            // Auto-expand logs when running
+            if (this.status.state === 'running') {
+                this.showLogs = true;
+            }
+        },
+
+        async checkSources() {
+            try {
+                const resp = await fetch('/api/sources');
+                const sources = await resp.json();
+                this.noSources = sources.length === 0;
+            } catch (e) {}
+        },
+
+        async loadStatus() {
+            try {
+                const resp = await fetch('/api/pipeline/status');
+                this.status = await resp.json();
+                if (this.status.latest_run?.stats_json) {
+                    try {
+                        const stats = JSON.parse(this.status.latest_run.stats_json);
+                        if (stats.stages) {
+                            this.completedStages = { ...stats.stages };
+                            this.showCompleted = true;
+                        }
+                        if (this.status.latest_run.status === 'completed') {
+                            this.pipelineStats = stats;
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse stats_json:', e);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load status:', e);
+            }
+        },
+
+        connectWebSocket() {
+            this.ws = new WebSocket(`ws://${window.location.host}/ws/progress`);
+            this.ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.status) {
+                    this.status = data.status;
+                }
+                if (data.event) {
+                    this.handleEvent(data);
+                }
+            };
+            this.ws.onclose = () => {
+                setTimeout(() => this.connectWebSocket(), 3000);
+            };
+        },
+
+        connectLogWebSocket() {
+            this.logWs = new WebSocket(`ws://${window.location.host}/ws/logs`);
+            this.logWs.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.event === 'log') {
+                    this.logs.push(data);
+                    if (this.logs.length > 500) {
+                        this.logs = this.logs.slice(-500);
+                    }
+                    this.$nextTick(() => {
+                        if (this.autoScroll && this.$refs.logPanel) {
+                            this.$refs.logPanel.scrollTop = this.$refs.logPanel.scrollHeight;
+                        }
+                    });
+                }
+            };
+            this.logWs.onclose = () => {
+                setTimeout(() => this.connectLogWebSocket(), 3000);
+            };
+        },
+
+        handleEvent(data) {
+            if (data.event === 'pipeline_start') {
+                this.status.state = 'running';
+                this.status.run_id = data.run_id;
+                this.completedStages = {};
+                this.pipelineStats = null;
+                this.showLogs = true;
+                this.showCompleted = false;
+            } else if (data.event === 'stage_start') {
+                this.status.current_stage = data.stage;
+            } else if (data.event === 'stage_complete') {
+                if (data.stats) {
+                    this.completedStages[data.stage] = data.stats;
+                }
+            } else if (data.event === 'stage_error') {
+                this.completedStages[data.stage] = {
+                    ...(this.completedStages[data.stage] || {}),
+                    _error: true,
+                    error_message: data.error
+                };
+            } else if (data.event === 'pipeline_complete') {
+                this.status.state = data.state;
+                this.status.current_stage = null;
+                if (data.stats) {
+                    this.pipelineStats = data.stats;
+                    if (data.stats.stages) {
+                        this.completedStages = { ...data.stats.stages };
+                    }
+                }
+                this.showCompleted = true;
+            }
+        },
+
+        getStageStatus(name) {
+            if (this.completedStages[name]) {
+                if (this.completedStages[name]._error) return 'error';
+                return 'completed';
+            }
+            if (this.status.state === 'running' && this.status.current_stage === name) {
+                return 'running';
+            }
+            if (this.status.state === 'running' && this.status.current_stage) {
+                const idx = this.stages.findIndex(s => s.name === name);
+                const currentIdx = this.stages.findIndex(s => s.name === this.status.current_stage);
+                if (idx < currentIdx) return 'completed';
+            }
+            return 'pending';
+        },
+
+        getStageProgress(name) {
+            return this.status.progress?.find(p => p.stage === name);
+        },
+
+        getProgressPercent(name) {
+            const progress = this.getStageProgress(name);
+            if (progress && progress.total > 0) {
+                return Math.round(progress.processed / progress.total * 100);
+            }
+            if (this.completedStages[name]) return 100;
+            return 0;
+        },
+
+        formatElapsed(sec) {
+            if (sec == null) return '';
+            if (sec < 60) return sec.toFixed(1) + 's';
+            const m = Math.floor(sec / 60);
+            const s = (sec % 60).toFixed(0);
+            return m + 'm ' + s + 's';
+        },
+
+        getSummaryTotalTime() {
+            if (!this.pipelineStats?.stages) return '-';
+            let total = 0;
+            for (const s of Object.values(this.pipelineStats.stages)) {
+                total += s.elapsed_sec || 0;
+            }
+            return this.formatElapsed(total);
+        },
+
+        getSummaryTotalSegments() {
+            if (!this.pipelineStats?.stages) return '-';
+            const exportStats = this.pipelineStats.stages.export;
+            if (exportStats) return exportStats.processed;
+            let total = 0;
+            for (const s of Object.values(this.pipelineStats.stages)) {
+                total = Math.max(total, s.processed || 0);
+            }
+            return total;
+        },
+
+        getSummaryPassRate() {
+            if (!this.pipelineStats?.stages) return '-';
+            const validate = this.pipelineStats.stages.validate;
+            if (validate && validate.processed > 0) {
+                return Math.round(validate.passed / validate.processed * 100) + '%';
+            }
+            for (const name of ['export', 'preprocess', 'download', 'metadata']) {
+                const s = this.pipelineStats.stages[name];
+                if (s && s.processed > 0) {
+                    return Math.round(s.passed / s.processed * 100) + '%';
+                }
+            }
+            return '-';
+        },
+
+        async startPipeline() {
+            try {
+                const resp = await fetch('/api/pipeline/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (resp.ok) {
+                    this.status.state = 'running';
+                    this.completedStages = {};
+                    this.pipelineStats = null;
+                }
+            } catch (e) {
+                console.error('Failed to start pipeline:', e);
+            }
+        },
+
+        async stopPipeline() {
+            try {
+                await fetch('/api/pipeline/stop', { method: 'POST' });
+            } catch (e) {
+                console.error('Failed to stop pipeline:', e);
+            }
+        },
+
+        async runStage(name) {
+            try {
+                const resp = await fetch(`/api/pipeline/stage/${name}`, { method: 'POST' });
+                if (resp.ok) {
+                    this.status.state = 'running';
+                    this.status.current_stage = name;
+                    this.showLogs = true;
+                }
+            } catch (e) {
+                console.error('Failed to run stage:', e);
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

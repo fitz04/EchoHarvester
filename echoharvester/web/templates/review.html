@@ -1,0 +1,859 @@
+{% extends "base.html" %}
+
+{% block title %}Review - EchoHarvester{% endblock %}
+{% block nav_review %}bg-indigo-700{% endblock %}
+
+{% block head %}
+<style>
+    [x-cloak] { display: none !important; }
+    .segment-row { transition: background-color 0.15s; }
+    .segment-row:hover { background-color: #f9fafb; }
+    .segment-row.active { background-color: #eef2ff; border-left: 3px solid #6366f1; }
+    .segment-list { scrollbar-width: thin; }
+    .segment-list::-webkit-scrollbar { width: 6px; }
+    .segment-list::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 3px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="reviewPage()" x-init="init()" @keydown.window="handleKeydown($event)">
+
+    <!-- Filter Bar -->
+    <div class="bg-white rounded-lg shadow p-4 mb-4">
+        <div class="flex flex-wrap items-center gap-3">
+            <!-- Quick Filters -->
+            <div class="flex gap-1">
+                <button @click="setQuickFilter('all')"
+                    class="px-3 py-1.5 rounded-full text-xs font-medium transition"
+                    :class="quickFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
+                    All
+                </button>
+                <button @click="setQuickFilter('needs_review')"
+                    class="px-3 py-1.5 rounded-full text-xs font-medium transition"
+                    :class="quickFilter === 'needs_review' ? 'bg-yellow-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
+                    Needs Review
+                </button>
+                <button @click="setQuickFilter('approved')"
+                    class="px-3 py-1.5 rounded-full text-xs font-medium transition"
+                    :class="quickFilter === 'approved' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
+                    Approved
+                </button>
+                <button @click="setQuickFilter('rejected')"
+                    class="px-3 py-1.5 rounded-full text-xs font-medium transition"
+                    :class="quickFilter === 'rejected' ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
+                    Rejected
+                </button>
+            </div>
+
+            <div class="h-6 w-px bg-gray-200"></div>
+
+            <!-- Primary filters -->
+            <select x-model="filters.media_id" @change="filters.offset = 0; loadSegments()"
+                class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                <option value="">All Media</option>
+                <template x-for="mid in filterOptions.media_ids" :key="mid">
+                    <option :value="mid" x-text="mid"></option>
+                </template>
+            </select>
+
+            <div class="relative flex-1 min-w-[200px] max-w-md">
+                <input type="text" x-model="filters.text_search"
+                    @keydown.enter="filters.offset = 0; loadSegments()"
+                    placeholder="Search text..."
+                    class="w-full border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 text-sm">
+                <svg class="w-4 h-4 text-gray-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+            </div>
+
+            <button @click="filters.offset = 0; loadSegments()"
+                class="px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition">
+                Search
+            </button>
+
+            <!-- More filters toggle -->
+            <button @click="showAdvancedFilters = !showAdvancedFilters"
+                class="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg">
+                <span x-text="showAdvancedFilters ? 'Less' : 'More filters'"></span>
+            </button>
+
+            <div class="ml-auto flex items-center gap-3">
+                <span class="text-xs text-gray-500"><span x-text="total"></span> results</span>
+                <label class="flex items-center gap-1 text-xs text-gray-600">
+                    <input type="checkbox" x-model="autoAdvance" class="rounded">
+                    Auto-advance
+                </label>
+                <button @click="showHelp = !showHelp" class="text-gray-400 hover:text-gray-600" title="Keyboard shortcuts">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Advanced Filters -->
+        <div x-show="showAdvancedFilters" x-cloak class="mt-4 pt-4 border-t border-gray-200">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Reject Reason</label>
+                    <select x-model="filters.reject_reason"
+                        class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                        <option value="">All</option>
+                        <template x-for="reason in filterOptions.reject_reasons" :key="reason">
+                            <option :value="reason" x-text="reason"></option>
+                        </template>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">CER Range</label>
+                    <div class="flex gap-1 items-center">
+                        <input type="number" x-model="filters.cer_min" step="0.01" min="0" max="2"
+                            placeholder="Min" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                        <span class="text-gray-400 text-xs">-</span>
+                        <input type="number" x-model="filters.cer_max" step="0.01" min="0" max="2"
+                            placeholder="Max" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Duration (s)</label>
+                    <div class="flex gap-1 items-center">
+                        <input type="number" x-model="filters.duration_min" step="0.1" min="0"
+                            placeholder="Min" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                        <span class="text-gray-400 text-xs">-</span>
+                        <input type="number" x-model="filters.duration_max" step="0.1" min="0"
+                            placeholder="Max" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">SNR (dB)</label>
+                    <div class="flex gap-1 items-center">
+                        <input type="number" x-model="filters.snr_min" step="1" min="0"
+                            placeholder="Min" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                        <span class="text-gray-400 text-xs">-</span>
+                        <input type="number" x-model="filters.snr_max" step="1" min="0"
+                            placeholder="Max" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Sort By</label>
+                    <div class="flex gap-1">
+                        <select x-model="filters.sort_by"
+                            class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                            <option value="">Default</option>
+                            <option value="cer">CER</option>
+                            <option value="duration_sec">Duration</option>
+                            <option value="snr_db">SNR</option>
+                            <option value="segment_index">Index</option>
+                        </select>
+                        <select x-model="filters.sort_order"
+                            class="w-16 border border-gray-300 rounded-lg px-1 py-1.5 text-sm">
+                            <option value="asc">Asc</option>
+                            <option value="desc">Desc</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 mt-3">
+                <button @click="filters.offset = 0; loadSegments()"
+                    class="px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition">
+                    Apply
+                </button>
+                <button @click="resetFilters()"
+                    class="px-4 py-1.5 border border-gray-300 text-gray-600 text-sm rounded-lg hover:bg-gray-50 transition">
+                    Reset All
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Panel -->
+    <div x-show="showHelp" x-cloak class="bg-yellow-50 border border-yellow-200 rounded-lg shadow px-4 py-3 mb-4">
+        <div class="flex justify-between items-center mb-2">
+            <h3 class="font-semibold text-sm text-yellow-800">Keyboard Shortcuts</h3>
+            <button @click="showHelp = false" class="text-yellow-600 hover:text-yellow-800 text-xs">Close</button>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-yellow-900">
+            <div><kbd class="bg-yellow-200 px-1 rounded">Space</kbd> Play/Pause</div>
+            <div><kbd class="bg-yellow-200 px-1 rounded">&larr;/&rarr;</kbd> Seek 2s</div>
+            <div><kbd class="bg-yellow-200 px-1 rounded">Ctrl+&larr;/&rarr;</kbd> Seek 5s</div>
+            <div><kbd class="bg-yellow-200 px-1 rounded">Tab</kbd> Next segment</div>
+            <div><kbd class="bg-yellow-200 px-1 rounded">Shift+Tab</kbd> Prev segment</div>
+            <div><kbd class="bg-yellow-200 px-1 rounded">Enter</kbd> Approve current</div>
+            <div><kbd class="bg-yellow-200 px-1 rounded">Ctrl+Enter</kbd> Use ASR &amp; approve</div>
+            <div><kbd class="bg-yellow-200 px-1 rounded">?</kbd> Toggle help</div>
+        </div>
+    </div>
+
+    <!-- Master-Detail Layout -->
+    <div class="flex gap-4" style="height: calc(100vh - 16rem);">
+        <!-- Segment List (left, 40%) -->
+        <div class="w-2/5 flex-shrink-0 bg-white rounded-lg shadow flex flex-col overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                <span class="text-sm font-medium text-gray-700">Segments</span>
+                <span class="text-xs text-gray-500">
+                    <span x-text="filters.offset + 1"></span>-<span x-text="Math.min(filters.offset + parseInt(filters.limit), total)"></span>
+                    of <span x-text="total"></span>
+                </span>
+            </div>
+            <div class="flex-1 overflow-y-auto segment-list">
+                <template x-for="(seg, idx) in segments" :key="seg.id">
+                    <div @click="selectSegment(idx)"
+                        class="segment-row px-4 py-3 border-b border-gray-100 cursor-pointer"
+                        :class="{ 'active': selectedIndex === idx }">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <button @click.stop="playInline(seg.id)" x-show="seg.audio_path"
+                                    class="text-indigo-500 hover:text-indigo-700 flex-shrink-0">
+                                    <svg x-show="inlineAudio !== seg.id" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
+                                    </svg>
+                                    <svg x-show="inlineAudio === seg.id" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M5.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75A.75.75 0 007.25 3h-1.5zM12.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75a.75.75 0 00-.75-.75h-1.5z"/>
+                                    </svg>
+                                </button>
+                                <span class="text-xs text-gray-400 font-mono" x-text="'#' + (filters.offset + idx + 1)"></span>
+                                <span class="text-sm text-gray-800 truncate" x-text="(seg.normalized_text || seg.original_text || '-').substring(0, 50)"></span>
+                            </div>
+                            <div class="flex items-center gap-2 flex-shrink-0 ml-2">
+                                <span class="text-xs text-gray-400" x-text="(seg.duration_sec || 0).toFixed(1) + 's'"></span>
+                                <span class="text-xs px-1.5 py-0.5 rounded"
+                                    :class="{
+                                        'bg-green-100 text-green-700': (seg.cer || 0) < 0.1,
+                                        'bg-yellow-100 text-yellow-700': (seg.cer || 0) >= 0.1 && (seg.cer || 0) < 0.15,
+                                        'bg-red-100 text-red-700': (seg.cer || 0) >= 0.15
+                                    }"
+                                    x-text="seg.cer != null ? ((seg.cer * 100).toFixed(0) + '%') : '-'"></span>
+                                <span class="w-2 h-2 rounded-full flex-shrink-0"
+                                    :class="{
+                                        'bg-green-500': seg.status?.includes('pass') || seg.status === 'exported',
+                                        'bg-blue-500': seg.status === 'approved',
+                                        'bg-red-400': seg.status?.includes('reject'),
+                                        'bg-gray-300': seg.status === 'pending'
+                                    }"></span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="segments.length === 0" class="px-4 py-12 text-center text-gray-400 text-sm">
+                    No segments found.
+                </div>
+            </div>
+            <!-- Pagination -->
+            <div class="px-4 py-2 border-t border-gray-200 flex justify-between items-center bg-gray-50">
+                <button @click="prevPage()" :disabled="filters.offset === 0"
+                    class="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Prev
+                </button>
+                <select x-model="filters.limit" @change="filters.offset = 0; loadSegments()"
+                    class="text-xs border border-gray-300 rounded px-2 py-1">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+                <button @click="nextPage()" :disabled="filters.offset + parseInt(filters.limit) >= total"
+                    class="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Next
+                </button>
+            </div>
+        </div>
+
+        <!-- Detail Panel (right, 60%) -->
+        <div class="flex-1 flex flex-col min-w-0 gap-4 overflow-y-auto">
+            <!-- No selection state -->
+            <div x-show="selectedIndex === -1" class="flex-1 flex items-center justify-center bg-white rounded-lg shadow">
+                <div class="text-center text-gray-400">
+                    <svg class="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+                    </svg>
+                    <p class="text-sm">Select a segment from the list</p>
+                    <p class="text-xs mt-1">or use Tab to navigate</p>
+                </div>
+            </div>
+
+            <!-- Selected segment detail -->
+            <template x-if="selectedSegment">
+                <div class="flex flex-col gap-4">
+                    <!-- Waveform Player -->
+                    <div class="bg-white rounded-lg shadow px-4 py-3">
+                        <div id="waveform" class="w-full h-28 bg-gray-50 rounded"></div>
+                        <div class="flex items-center gap-4 mt-2">
+                            <button @click="togglePlay()" class="text-indigo-600 hover:text-indigo-800">
+                                <svg x-show="!isPlaying" class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
+                                </svg>
+                                <svg x-show="isPlaying" class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M5.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75A.75.75 0 007.25 3h-1.5zM12.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75a.75.75 0 00-.75-.75h-1.5z"/>
+                                </svg>
+                            </button>
+                            <span class="text-sm text-gray-600" x-text="formatTime(currentTime) + ' / ' + formatTime(currentDuration)"></span>
+                            <div class="flex items-center gap-1">
+                                <label class="text-xs text-gray-500">Speed:</label>
+                                <select x-model="playbackRate" @change="setPlaybackRate()" class="text-xs border border-gray-300 rounded px-1 py-0.5">
+                                    <option value="0.5">0.5x</option>
+                                    <option value="0.75">0.75x</option>
+                                    <option value="1">1.0x</option>
+                                    <option value="1.25">1.25x</option>
+                                    <option value="1.5">1.5x</option>
+                                </select>
+                            </div>
+                            <span class="ml-auto text-xs text-gray-400" x-text="'Segment ' + (selectedIndex + 1) + ' / ' + segments.length"></span>
+                        </div>
+                    </div>
+
+                    <!-- Text Comparison (3 columns) -->
+                    <div class="bg-white rounded-lg shadow px-4 py-3">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <!-- Original Text -->
+                            <div>
+                                <label class="text-xs font-medium text-gray-500 mb-1 block">Original Text</label>
+                                <div class="p-3 bg-gray-50 rounded-lg text-sm text-gray-700 min-h-[80px] whitespace-pre-wrap"
+                                    x-text="selectedSegment?.original_text || '-'"></div>
+                            </div>
+
+                            <!-- Edit Text -->
+                            <div>
+                                <label class="text-xs font-medium text-gray-500 mb-1 block">
+                                    Corrected Text
+                                    <span class="ml-1" x-show="liveCer !== null"
+                                        x-text="'CER: ' + (liveCer * 100).toFixed(1) + '%'"
+                                        :class="{
+                                            'text-green-600': liveCer < 0.1,
+                                            'text-yellow-600': liveCer >= 0.1 && liveCer < 0.15,
+                                            'text-red-600': liveCer >= 0.15
+                                        }"></span>
+                                </label>
+                                <textarea x-ref="editArea"
+                                    x-model="editText"
+                                    @input.debounce.300ms="computeLiveCer()"
+                                    class="w-full p-3 border-2 border-indigo-300 rounded-lg text-sm min-h-[80px] resize-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    placeholder="Edit transcription..."></textarea>
+                            </div>
+
+                            <!-- ASR Text -->
+                            <div>
+                                <div class="flex items-center justify-between mb-1">
+                                    <label class="text-xs font-medium text-gray-500">ASR Text</label>
+                                    <button @click="useAsrText()"
+                                        class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded hover:bg-green-200 transition"
+                                        x-show="selectedSegment?.whisper_text">
+                                        Use ASR
+                                    </button>
+                                </div>
+                                <div class="p-3 bg-green-50 rounded-lg text-sm text-gray-700 min-h-[80px] whitespace-pre-wrap"
+                                    x-text="selectedSegment?.whisper_text || '-'"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Metadata (collapsible) -->
+                    <div class="bg-white rounded-lg shadow">
+                        <button @click="showMetadata = !showMetadata"
+                            class="w-full px-4 py-2.5 flex justify-between items-center text-left hover:bg-gray-50 transition">
+                            <span class="text-xs font-medium text-gray-500">Metadata</span>
+                            <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': showMetadata }"
+                                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </button>
+                        <div x-show="showMetadata" x-cloak class="px-4 pb-3">
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                                <div>
+                                    <span class="text-gray-400">ID</span>
+                                    <p class="font-mono text-gray-600 truncate" x-text="selectedSegment?.id"></p>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">Status</span>
+                                    <p class="font-medium" x-text="selectedSegment?.status"
+                                        :class="{
+                                            'text-green-600': selectedSegment?.status === 'approved',
+                                            'text-blue-600': selectedSegment?.status?.includes('pass') || selectedSegment?.status === 'exported',
+                                            'text-red-600': selectedSegment?.status?.includes('reject')
+                                        }"></p>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">Duration</span>
+                                    <p class="text-gray-600" x-text="(selectedSegment?.duration_sec || 0).toFixed(2) + 's'"></p>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">CER</span>
+                                    <p class="text-gray-600" x-text="selectedSegment?.cer != null ? ((selectedSegment.cer * 100).toFixed(2) + '%') : '-'"></p>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">SNR</span>
+                                    <p class="text-gray-600" x-text="selectedSegment?.snr_db ? (selectedSegment.snr_db.toFixed(1) + ' dB') : '-'"></p>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">Speech Ratio</span>
+                                    <p class="text-gray-600" x-text="selectedSegment?.speech_ratio ? ((selectedSegment.speech_ratio * 100).toFixed(1) + '%') : '-'"></p>
+                                </div>
+                                <div x-show="selectedSegment?.reject_reason" class="col-span-2">
+                                    <span class="text-gray-400">Reject Reason</span>
+                                    <p class="text-red-600" x-text="selectedSegment?.reject_reason"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="bg-white rounded-lg shadow px-4 py-3 flex flex-wrap gap-2">
+                        <button @click="approveSegment('manual_edit')"
+                            class="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-indigo-700 transition font-medium">
+                            Approve (Enter)
+                        </button>
+                        <button @click="useAsrAndApprove()"
+                            class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-green-700 transition font-medium"
+                            x-show="selectedSegment?.whisper_text">
+                            ASR + Approve (Ctrl+Enter)
+                        </button>
+                        <button @click="selectSegment(selectedIndex + 1)"
+                            class="border border-gray-300 text-gray-700 px-5 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+                            Skip (Tab)
+                        </button>
+                        <button @click="rejectSegment()"
+                            class="border border-red-300 text-red-700 px-5 py-2 rounded-lg text-sm hover:bg-red-50 transition">
+                            Reject
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import WaveSurfer from 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js';
+window.WaveSurfer = WaveSurfer;
+</script>
+<script>
+function reviewPage() {
+    return {
+        // List state (from Explore)
+        segments: [],
+        total: 0,
+        filters: {
+            status: '',
+            media_id: '',
+            cer_min: '',
+            cer_max: '',
+            duration_min: '',
+            duration_max: '',
+            snr_min: '',
+            snr_max: '',
+            text_search: '',
+            reject_reason: '',
+            sort_by: '',
+            sort_order: 'asc',
+            limit: 50,
+            offset: 0
+        },
+        filterOptions: { media_ids: [], reject_reasons: [], ranges: {} },
+        quickFilter: 'all',
+        showAdvancedFilters: false,
+
+        // Detail state (from Transcribe)
+        selectedIndex: -1,
+        editText: '',
+        liveCer: null,
+        wavesurfer: null,
+        isPlaying: false,
+        playbackRate: 1,
+        currentTime: 0,
+        currentDuration: 0,
+        autoAdvance: true,
+        showMetadata: false,
+        showHelp: false,
+        _saving: false,
+
+        // Inline playback
+        inlineAudio: null,
+        _audioEl: null,
+
+        get selectedSegment() {
+            return this.segments[this.selectedIndex] || null;
+        },
+
+        async init() {
+            await this.loadFilterOptions();
+
+            // Check URL params for deep linking
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('media_id')) this.filters.media_id = params.get('media_id');
+            if (params.get('status')) {
+                this.filters.status = params.get('status');
+                this.quickFilter = params.get('status') === 'gpu_pass' ? 'needs_review' : params.get('status');
+            }
+
+            await this.loadSegments();
+
+            // Select segment from URL
+            const segmentId = params.get('segment_id');
+            if (segmentId) {
+                const idx = this.segments.findIndex(s => s.id === segmentId);
+                if (idx >= 0) this.selectSegment(idx);
+            }
+        },
+
+        setQuickFilter(filter) {
+            this.quickFilter = filter;
+            if (filter === 'all') {
+                this.filters.status = '';
+            } else if (filter === 'needs_review') {
+                this.filters.status = 'gpu_pass';
+            } else if (filter === 'approved') {
+                this.filters.status = 'approved';
+            } else if (filter === 'rejected') {
+                this.filters.status = 'gpu_reject';
+            }
+            this.filters.offset = 0;
+            this.selectedIndex = -1;
+            this.loadSegments();
+        },
+
+        async loadFilterOptions() {
+            try {
+                const resp = await fetch('/api/dashboard/segments/filter-options');
+                this.filterOptions = await resp.json();
+            } catch (e) {
+                console.error('Failed to load filter options:', e);
+            }
+        },
+
+        async loadSegments() {
+            try {
+                const params = new URLSearchParams();
+                if (this.filters.status) params.set('status', this.filters.status);
+                if (this.filters.media_id) params.set('media_id', this.filters.media_id);
+                if (this.filters.cer_min !== '' && this.filters.cer_min !== null) params.set('cer_min', this.filters.cer_min);
+                if (this.filters.cer_max !== '' && this.filters.cer_max !== null) params.set('cer_max', this.filters.cer_max);
+                if (this.filters.duration_min !== '' && this.filters.duration_min !== null) params.set('duration_min', this.filters.duration_min);
+                if (this.filters.duration_max !== '' && this.filters.duration_max !== null) params.set('duration_max', this.filters.duration_max);
+                if (this.filters.snr_min !== '' && this.filters.snr_min !== null) params.set('snr_min', this.filters.snr_min);
+                if (this.filters.snr_max !== '' && this.filters.snr_max !== null) params.set('snr_max', this.filters.snr_max);
+                if (this.filters.text_search) params.set('text_search', this.filters.text_search);
+                if (this.filters.reject_reason) params.set('reject_reason', this.filters.reject_reason);
+                if (this.filters.sort_by) params.set('sort_by', this.filters.sort_by);
+                if (this.filters.sort_order) params.set('sort_order', this.filters.sort_order);
+                params.set('limit', this.filters.limit);
+                params.set('offset', this.filters.offset);
+
+                const resp = await fetch('/api/dashboard/segments?' + params);
+                const data = await resp.json();
+                this.segments = data.segments;
+                this.total = data.total;
+            } catch (e) {
+                console.error('Failed to load segments:', e);
+            }
+        },
+
+        resetFilters() {
+            this.filters = {
+                status: '', media_id: '',
+                cer_min: '', cer_max: '',
+                duration_min: '', duration_max: '',
+                snr_min: '', snr_max: '',
+                text_search: '', reject_reason: '',
+                sort_by: '', sort_order: 'asc',
+                limit: 50, offset: 0
+            };
+            this.quickFilter = 'all';
+            this.selectedIndex = -1;
+            this.loadSegments();
+        },
+
+        selectSegment(idx) {
+            if (idx < 0 || idx >= this.segments.length) return;
+            this.selectedIndex = idx;
+            const seg = this.selectedSegment;
+            if (!seg) return;
+
+            this.editText = seg.normalized_text || seg.original_text || '';
+            this.computeLiveCer();
+            this.loadWaveform(seg.id);
+            this.updateUrl();
+        },
+
+        // Waveform (from Transcribe)
+        loadWaveform(segId) {
+            const url = `/api/dashboard/segments/${segId}/audio`;
+
+            if (this.wavesurfer) {
+                this.wavesurfer.destroy();
+                this.wavesurfer = null;
+            }
+
+            this.isPlaying = false;
+            this.currentTime = 0;
+            this.currentDuration = 0;
+
+            if (!window.WaveSurfer) {
+                console.warn('WaveSurfer not loaded yet');
+                return;
+            }
+
+            this.wavesurfer = window.WaveSurfer.create({
+                container: '#waveform',
+                waveColor: '#c7d2fe',
+                progressColor: '#4f46e5',
+                height: 112,
+                barWidth: 2,
+                barGap: 1,
+                barRadius: 2,
+                cursorColor: '#6366f1',
+                cursorWidth: 2,
+                url: url,
+            });
+
+            this.wavesurfer.on('ready', () => {
+                this.currentDuration = this.wavesurfer.getDuration();
+                this.wavesurfer.setPlaybackRate(parseFloat(this.playbackRate));
+            });
+
+            this.wavesurfer.on('timeupdate', (time) => {
+                this.currentTime = time;
+            });
+
+            this.wavesurfer.on('finish', () => { this.isPlaying = false; });
+            this.wavesurfer.on('play', () => { this.isPlaying = true; });
+            this.wavesurfer.on('pause', () => { this.isPlaying = false; });
+        },
+
+        togglePlay() {
+            if (!this.wavesurfer) return;
+            this.wavesurfer.playPause();
+        },
+
+        seek(seconds) {
+            if (!this.wavesurfer) return;
+            const dur = this.wavesurfer.getDuration();
+            if (dur <= 0) return;
+            const newTime = Math.max(0, Math.min(dur, this.wavesurfer.getCurrentTime() + seconds));
+            this.wavesurfer.seekTo(newTime / dur);
+        },
+
+        setPlaybackRate() {
+            if (this.wavesurfer) {
+                this.wavesurfer.setPlaybackRate(parseFloat(this.playbackRate));
+            }
+        },
+
+        formatTime(sec) {
+            if (!sec || isNaN(sec)) return '0:00';
+            const m = Math.floor(sec / 60);
+            const s = Math.floor(sec % 60);
+            return m + ':' + s.toString().padStart(2, '0');
+        },
+
+        // CER computation (from Transcribe)
+        normalizeForCer(text) {
+            if (!text) return '';
+            return text.normalize('NFC').replace(/\s/g, '').toLowerCase();
+        },
+
+        levenshteinDistance(s1, s2) {
+            if (s1.length < s2.length) return this.levenshteinDistance(s2, s1);
+            if (s2.length === 0) return s1.length;
+            let prev = Array.from({ length: s2.length + 1 }, (_, i) => i);
+            for (let i = 0; i < s1.length; i++) {
+                const curr = [i + 1];
+                for (let j = 0; j < s2.length; j++) {
+                    const ins = prev[j + 1] + 1;
+                    const del = curr[j] + 1;
+                    const sub = prev[j] + (s1[i] !== s2[j] ? 1 : 0);
+                    curr.push(Math.min(ins, del, sub));
+                }
+                prev = curr;
+            }
+            return prev[prev.length - 1];
+        },
+
+        computeLiveCer() {
+            const seg = this.selectedSegment;
+            if (!seg || !seg.whisper_text) { this.liveCer = null; return; }
+            const ref = this.normalizeForCer(this.editText);
+            const hyp = this.normalizeForCer(seg.whisper_text);
+            if (!ref.length) { this.liveCer = hyp.length > 0 ? 1.0 : 0.0; return; }
+            this.liveCer = this.levenshteinDistance(ref, hyp) / ref.length;
+        },
+
+        useAsrText() {
+            const seg = this.selectedSegment;
+            if (!seg || !seg.whisper_text) return;
+            this.editText = seg.whisper_text;
+            this.computeLiveCer();
+        },
+
+        async useAsrAndApprove() {
+            this.useAsrText();
+            await this.approveSegment('use_asr');
+        },
+
+        async approveSegment(source) {
+            const seg = this.selectedSegment;
+            if (!seg || this._saving) return;
+            this._saving = true;
+
+            try {
+                const resp = await fetch(`/api/dashboard/transcribe/segments/${seg.id}/approve`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        normalized_text: this.editText,
+                        source: source || 'manual_edit',
+                    }),
+                });
+
+                if (!resp.ok) {
+                    console.error('Approve failed:', await resp.text());
+                    return;
+                }
+
+                const result = await resp.json();
+                seg.status = 'approved';
+                seg.normalized_text = result.normalized_text;
+                seg.cer = result.cer;
+
+                if (this.autoAdvance && this.selectedIndex < this.segments.length - 1) {
+                    this.selectSegment(this.selectedIndex + 1);
+                }
+            } catch (e) {
+                console.error('Error approving:', e);
+            } finally {
+                this._saving = false;
+            }
+        },
+
+        async rejectSegment() {
+            const seg = this.selectedSegment;
+            if (!seg || this._saving) return;
+
+            const reason = prompt('Reject reason:', 'unintelligible');
+            if (reason === null) return;
+
+            this._saving = true;
+            try {
+                const resp = await fetch(`/api/dashboard/transcribe/segments/${seg.id}/reject`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: reason || 'unintelligible' }),
+                });
+
+                if (!resp.ok) {
+                    console.error('Reject failed:', await resp.text());
+                    return;
+                }
+
+                seg.status = 'gpu_reject';
+                seg.reject_reason = `manual_review:${reason}`;
+
+                if (this.autoAdvance && this.selectedIndex < this.segments.length - 1) {
+                    this.selectSegment(this.selectedIndex + 1);
+                }
+            } catch (e) {
+                console.error('Error rejecting:', e);
+            } finally {
+                this._saving = false;
+            }
+        },
+
+        // Inline audio playback in list
+        playInline(segId) {
+            if (this.inlineAudio === segId) {
+                if (this._audioEl) { this._audioEl.pause(); this._audioEl = null; }
+                this.inlineAudio = null;
+                return;
+            }
+            if (this._audioEl) { this._audioEl.pause(); }
+            this._audioEl = new Audio('/api/dashboard/segments/' + segId + '/audio');
+            this._audioEl.onended = () => { this.inlineAudio = null; this._audioEl = null; };
+            this._audioEl.play();
+            this.inlineAudio = segId;
+        },
+
+        updateUrl() {
+            const seg = this.selectedSegment;
+            if (!seg) return;
+            const params = new URLSearchParams();
+            if (this.filters.media_id) params.set('media_id', this.filters.media_id);
+            params.set('segment_id', seg.id);
+            if (this.filters.status) params.set('status', this.filters.status);
+            history.replaceState(null, '', '/review?' + params.toString());
+        },
+
+        prevPage() {
+            this.filters.offset = Math.max(0, this.filters.offset - parseInt(this.filters.limit));
+            this.selectedIndex = -1;
+            this.loadSegments();
+        },
+
+        nextPage() {
+            if (this.filters.offset + parseInt(this.filters.limit) < this.total) {
+                this.filters.offset += parseInt(this.filters.limit);
+                this.selectedIndex = -1;
+                this.loadSegments();
+            }
+        },
+
+        handleKeydown(e) {
+            const tag = e.target.tagName;
+            const inTextarea = tag === 'TEXTAREA' || tag === 'INPUT';
+
+            if (e.key === 'Escape') {
+                this.showHelp = false;
+                e.preventDefault();
+                return;
+            }
+
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    this.selectSegment(this.selectedIndex - 1);
+                } else {
+                    this.selectSegment(this.selectedIndex + 1);
+                }
+                return;
+            }
+
+            if (e.key === 'Enter' && e.ctrlKey) {
+                e.preventDefault();
+                this.useAsrAndApprove();
+                return;
+            }
+
+            if (inTextarea) return;
+
+            if (e.key === ' ') {
+                e.preventDefault();
+                this.togglePlay();
+                return;
+            }
+
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                this.seek(e.ctrlKey ? -5 : -2);
+                return;
+            }
+
+            if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                this.seek(e.ctrlKey ? 5 : 2);
+                return;
+            }
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.approveSegment('manual_edit');
+                return;
+            }
+
+            if (e.key === '?') {
+                e.preventDefault();
+                this.showHelp = !this.showHelp;
+                return;
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

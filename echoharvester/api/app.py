@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -79,41 +79,47 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
     app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 
-    # HTML pages
+    # HTML pages (3-page layout: Home, Process, Review)
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
-        """Dashboard page."""
+        """Home page (sources + overview)."""
         if templates:
-            return templates.TemplateResponse("dashboard.html", {"request": request})
-        return HTMLResponse(content=get_fallback_html("Dashboard"), status_code=200)
+            return templates.TemplateResponse("home.html", {"request": request})
+        return HTMLResponse(content=get_fallback_html("Home"), status_code=200)
 
-    @app.get("/sources", response_class=HTMLResponse)
-    async def sources_page(request: Request):
-        """Sources management page."""
+    @app.get("/process", response_class=HTMLResponse)
+    async def process_page(request: Request):
+        """Process page (pipeline control)."""
         if templates:
-            return templates.TemplateResponse("sources.html", {"request": request})
-        return HTMLResponse(content=get_fallback_html("Sources"), status_code=200)
+            return templates.TemplateResponse("process.html", {"request": request})
+        return HTMLResponse(content=get_fallback_html("Process"), status_code=200)
 
-    @app.get("/pipeline", response_class=HTMLResponse)
-    async def pipeline_page(request: Request):
-        """Pipeline control page."""
+    @app.get("/review", response_class=HTMLResponse)
+    async def review_page(request: Request):
+        """Review page (explore + transcribe)."""
         if templates:
-            return templates.TemplateResponse("pipeline.html", {"request": request})
-        return HTMLResponse(content=get_fallback_html("Pipeline"), status_code=200)
+            return templates.TemplateResponse("review.html", {"request": request})
+        return HTMLResponse(content=get_fallback_html("Review"), status_code=200)
 
-    @app.get("/explore", response_class=HTMLResponse)
-    async def explore_page(request: Request):
-        """Data exploration page."""
-        if templates:
-            return templates.TemplateResponse("explore.html", {"request": request})
-        return HTMLResponse(content=get_fallback_html("Explore"), status_code=200)
+    # Backward-compatible redirects
+    @app.get("/sources")
+    async def sources_redirect():
+        return RedirectResponse(url="/", status_code=301)
 
-    @app.get("/transcribe", response_class=HTMLResponse)
-    async def transcribe_page(request: Request):
-        """Transcription correction page."""
-        if templates:
-            return templates.TemplateResponse("transcribe.html", {"request": request})
-        return HTMLResponse(content=get_fallback_html("Transcribe"), status_code=200)
+    @app.get("/pipeline")
+    async def pipeline_redirect():
+        return RedirectResponse(url="/process", status_code=301)
+
+    @app.get("/explore")
+    async def explore_redirect():
+        return RedirectResponse(url="/review", status_code=301)
+
+    @app.get("/transcribe")
+    async def transcribe_redirect(request: Request):
+        # Preserve query params for deep linking
+        query = str(request.url.query)
+        target = "/review" + ("?" + query if query else "")
+        return RedirectResponse(url=target, status_code=301)
 
     return app
 
@@ -134,11 +140,9 @@ def get_fallback_html(title: str) -> str:
     </head>
     <body>
         <div class="nav">
-            <a href="/">Dashboard</a>
-            <a href="/sources">Sources</a>
-            <a href="/pipeline">Pipeline</a>
-            <a href="/explore">Explore</a>
-            <a href="/transcribe">Transcribe</a>
+            <a href="/">Home</a>
+            <a href="/process">Process</a>
+            <a href="/review">Review</a>
         </div>
         <h1>EchoHarvester - {title}</h1>
         <p>Templates not found. Please create HTML templates in the web/templates directory.</p>

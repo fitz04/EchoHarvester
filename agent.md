@@ -67,6 +67,14 @@
 - [x] 대규모 데이터 처리 최적화
 - [x] 로깅 개선
 
+### Phase 7: UI 리디자인 (5 → 3 페이지)
+- [x] base.html 내비게이션 3개로 변경 (Home, Process, Review)
+- [x] app.py 라우트 변경 + 이전 URL 301 리다이렉트
+- [x] home.html: Dashboard + Sources 통합 (인라인 소스 추가, 첫 방문 Welcome, donut 차트)
+- [x] process.html: Pipeline 간소화 (수평 스테퍼, 접이식 로그/완료 단계)
+- [x] review.html: Explore + Transcribe 마스터-디테일 통합 (WaveSurfer, 필터, 키보드 단축키)
+- [x] 이전 템플릿 _archive 폴더로 이동
+
 ---
 
 ## 현재 진행 상태
@@ -263,6 +271,28 @@ tests/
 **대규모 데이터 최적화**
 - `echoharvester/db.py`: WAL 저널 모드 + busy_timeout=5000ms (동시 읽기 성능 향상)
 - `echoharvester/db.py`: `bulk_update_segments()` 500건 단위 청크 분할 (SQLite 변수 제한 방지)
+
+### Phase 7: UI 리디자인 (5 → 3 페이지)
+**시작일**: 2026-02-07
+**완료일**: 2026-02-07
+**상태**: 완료
+
+#### 변경 파일
+- `echoharvester/web/templates/base.html`: Nav 5개 → 3개 (Home, Process, Review), 파이프라인 상태 링크 /process로 변경
+- `echoharvester/api/app.py`: 라우트 변경 (/ → home.html, /process → process.html, /review → review.html) + 이전 URL 301 리다이렉트 (query params 보존)
+- **새로 생성** `echoharvester/web/templates/home.html`: Dashboard + Sources 통합
+  - 인라인 소스 추가 (URL 자동 타입 감지), 첫 방문 Welcome hero, Quick Stats 4카드
+  - 소스 테이블 + CSS donut 차트 + 최근 활동 피드 + Process All 버튼
+- **새로 생성** `echoharvester/web/templates/process.html`: Pipeline 간소화
+  - 수평 스테퍼 (5단계 원/라인), 활성 스테이지 상세 진행바, 완료 단계 아코디언
+  - Advanced 접힘 영역에 개별 스테이지 Run 버튼, 접이식 로그 패널
+  - 완료 배너 + "Review Results" CTA 버튼
+- **새로 생성** `echoharvester/web/templates/review.html`: Explore + Transcribe 마스터-디테일 통합
+  - 좌측 세그먼트 리스트 (40%) + 우측 상세 패널 (60%)
+  - 퀵필터 칩 (All/Needs Review/Approved/Rejected), 간소화된 필터바 + "More" 접힘
+  - WaveSurfer.js 파형, 3열 텍스트 비교, 접이식 메타데이터, 액션 버튼
+  - 키보드 단축키 (Space/Tab/Enter/Ctrl+Enter), auto-advance, URL 딥링크
+- 이전 템플릿 5개 → `_archive/` 폴더로 이동
 
 ---
 

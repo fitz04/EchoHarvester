@@ -18,11 +18,9 @@
                 <div class="flex items-center space-x-8">
                     <a href="/" class="text-xl font-bold">EchoHarvester</a>
                     <div class="hidden md:flex space-x-4">
-                        <a href="/" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_dashboard %}{% endblock %}">Dashboard</a>
-                        <a href="/sources" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_sources %}{% endblock %}">Sources</a>
-                        <a href="/pipeline" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_pipeline %}{% endblock %}">Pipeline</a>
-                        <a href="/explore" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_explore %}{% endblock %}">Explore</a>
-                        <a href="/transcribe" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_transcribe %}{% endblock %}">Transcribe</a>
+                        <a href="/" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_home %}{% endblock %}">Home</a>
+                        <a href="/process" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_process %}{% endblock %}">Process</a>
+                        <a href="/review" class="px-3 py-2 rounded-md hover:bg-indigo-500 {% block nav_review %}{% endblock %}">Review</a>
                     </div>
                 </div>
                 <div class="flex items-center space-x-4">
@@ -36,7 +34,7 @@
                             if (data.event === 'pipeline_complete') { status = data.state; currentStage = null; }
                         };
                     ">
-                        <a href="/pipeline" class="flex items-center hover:opacity-80 transition">
+                        <a href="/process" class="flex items-center hover:opacity-80 transition">
                             <span class="w-3 h-3 rounded-full mr-2"
                                 :class="{
                                     'bg-green-400': status === 'idle' || status === 'completed',

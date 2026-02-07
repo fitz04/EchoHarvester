@@ -1,0 +1,376 @@
+{% extends "base.html" %}
+
+{% block title %}Home - EchoHarvester{% endblock %}
+{% block nav_home %}bg-indigo-700{% endblock %}
+
+{% block content %}
+<div x-data="homePage()" x-init="init()">
+
+    <!-- Welcome Hero (first time / no sources) -->
+    <div x-show="isFirstTime" x-cloak class="mb-8">
+        <div class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-8 text-white">
+            <h1 class="text-3xl font-bold mb-2">Welcome to EchoHarvester</h1>
+            <p class="text-indigo-100 mb-6">Korean ASR training data pipeline. Add a source to get started.</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white/10 rounded-lg p-4">
+                    <div class="text-2xl font-bold mb-1">1</div>
+                    <div class="font-medium">Add Source</div>
+                    <div class="text-sm text-indigo-200">Paste a YouTube URL or local path below</div>
+                </div>
+                <div class="bg-white/10 rounded-lg p-4">
+                    <div class="text-2xl font-bold mb-1">2</div>
+                    <div class="font-medium">Process</div>
+                    <div class="text-sm text-indigo-200">Run the 5-stage pipeline automatically</div>
+                </div>
+                <div class="bg-white/10 rounded-lg p-4">
+                    <div class="text-2xl font-bold mb-1">3</div>
+                    <div class="font-medium">Review</div>
+                    <div class="text-sm text-indigo-200">Review, correct, and approve segments</div>
+                </div>
+            </div>
+            <!-- Inline source add (hero) -->
+            <form @submit.prevent="addSource()" class="flex gap-2 max-w-2xl">
+                <input type="text" x-model="newSourceInput"
+                    @input="detectSourceType()"
+                    placeholder="Paste YouTube URL or local path..."
+                    class="flex-1 px-4 py-3 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-indigo-300">
+                <input type="text" x-model="newSourceLabel"
+                    placeholder="Label (optional)"
+                    class="w-40 px-4 py-3 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-indigo-300">
+                <button type="submit" :disabled="!newSourceInput.trim()"
+                    class="px-6 py-3 bg-white text-indigo-600 font-medium rounded-lg hover:bg-indigo-50 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    Add
+                </button>
+            </form>
+            <div x-show="detectedType" class="mt-2 text-sm text-indigo-200">
+                Detected: <span class="font-medium text-white" x-text="detectedType"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Stats (when data exists) -->
+    <div x-show="!isFirstTime" x-cloak>
+        <!-- Inline source add bar -->
+        <div class="bg-white rounded-lg shadow p-4 mb-6">
+            <form @submit.prevent="addSource()" class="flex gap-2 items-center">
+                <div class="text-sm font-medium text-gray-600 mr-2">Add Source:</div>
+                <input type="text" x-model="newSourceInput"
+                    @input="detectSourceType()"
+                    placeholder="Paste YouTube URL or local path..."
+                    class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500">
+                <input type="text" x-model="newSourceLabel"
+                    placeholder="Label (optional)"
+                    class="w-36 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500">
+                <span x-show="detectedType" class="text-xs px-2 py-1 bg-indigo-100 text-indigo-700 rounded" x-text="detectedType"></span>
+                <button type="submit" :disabled="!newSourceInput.trim()"
+                    class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    Add
+                </button>
+            </form>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-white rounded-lg shadow p-5">
+                <div class="text-gray-500 text-xs uppercase tracking-wide">Sources</div>
+                <div class="text-2xl font-bold text-gray-800 mt-1" x-text="stats.total_sources || 0"></div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-5">
+                <div class="text-gray-500 text-xs uppercase tracking-wide">Media Items</div>
+                <div class="text-2xl font-bold text-gray-800 mt-1" x-text="stats.total_media_items || 0"></div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-5">
+                <div class="text-gray-500 text-xs uppercase tracking-wide">Segments</div>
+                <div class="text-2xl font-bold text-gray-800 mt-1" x-text="stats.total_segments || 0"></div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-5">
+                <div class="text-gray-500 text-xs uppercase tracking-wide">Passed Duration</div>
+                <div class="text-2xl font-bold text-indigo-600 mt-1">
+                    <span x-text="(stats.passed_duration_hours || 0).toFixed(1)"></span>
+                    <span class="text-sm font-normal">hrs</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content: Sources Table + Status Summary -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6" x-show="!isFirstTime" x-cloak>
+        <!-- Sources Table (2/3) -->
+        <div class="lg:col-span-2 bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h2 class="text-lg font-semibold text-gray-800">Sources</h2>
+                <button @click="processAll()"
+                    class="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    Process All
+                </button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Label</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">URL / Path</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Items</th>
+                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                        <template x-for="source in sources" :key="source.id">
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-6 py-4 text-sm font-medium text-gray-900" x-text="source.label || '-'"></td>
+                                <td class="px-6 py-4 text-sm text-gray-600">
+                                    <span class="px-2 py-1 bg-gray-100 rounded text-xs" x-text="source.type"></span>
+                                </td>
+                                <td class="px-6 py-4 text-sm text-gray-500 max-w-xs truncate" x-text="source.url_or_path"></td>
+                                <td class="px-6 py-4 text-sm">
+                                    <span class="px-2 py-1 rounded text-xs"
+                                        :class="{
+                                            'bg-green-100 text-green-800': source.status === 'done',
+                                            'bg-yellow-100 text-yellow-800': source.status === 'processing',
+                                            'bg-gray-100 text-gray-800': source.status === 'pending',
+                                            'bg-red-100 text-red-800': source.status === 'error'
+                                        }"
+                                        x-text="source.status">
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 text-sm text-gray-600">
+                                    <span x-text="source.processed_items"></span> / <span x-text="source.total_items"></span>
+                                </td>
+                                <td class="px-6 py-4 text-right text-sm">
+                                    <button @click="deleteSource(source.id)"
+                                        class="text-red-600 hover:text-red-800">Delete</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Right Sidebar: Status + Recent Activity (1/3) -->
+        <div class="space-y-6">
+            <!-- Status Donut -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-sm font-semibold text-gray-800 mb-4">Segment Status</h3>
+                <div class="relative w-40 h-40 mx-auto mb-4">
+                    <svg viewBox="0 0 36 36" class="w-full h-full">
+                        <template x-for="(slice, idx) in donutSlices" :key="idx">
+                            <circle cx="18" cy="18" r="15.9155"
+                                fill="none" :stroke="slice.color" stroke-width="3.5"
+                                :stroke-dasharray="slice.dash"
+                                :stroke-dashoffset="slice.offset"
+                                transform="rotate(-90 18 18)">
+                            </circle>
+                        </template>
+                        <circle cx="18" cy="18" r="12" fill="white"/>
+                    </svg>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <div class="text-center">
+                            <div class="text-xl font-bold text-gray-800" x-text="stats.total_segments || 0"></div>
+                            <div class="text-xs text-gray-500">segments</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Legend -->
+                <div class="space-y-1.5">
+                    <template x-for="(count, status) in stats.segment_status" :key="status">
+                        <div class="flex items-center justify-between text-xs">
+                            <div class="flex items-center gap-1.5">
+                                <span class="w-2.5 h-2.5 rounded-full"
+                                    :class="{
+                                        'bg-green-500': status.includes('pass') || status === 'exported',
+                                        'bg-blue-500': status === 'approved',
+                                        'bg-red-400': status.includes('reject') || status === 'error',
+                                        'bg-yellow-400': status.includes('processing'),
+                                        'bg-gray-400': status === 'pending'
+                                    }"></span>
+                                <span class="text-gray-600" x-text="status"></span>
+                            </div>
+                            <span class="font-medium text-gray-800" x-text="count"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-sm font-semibold text-gray-800 mb-4">Recent Activity</h3>
+                <div class="space-y-3">
+                    <template x-for="seg in recentActivity" :key="seg.id">
+                        <div class="flex items-start gap-2 text-xs">
+                            <span class="w-2 h-2 rounded-full mt-1 flex-shrink-0"
+                                :class="{
+                                    'bg-green-500': seg.status === 'gpu_pass' || seg.status === 'exported',
+                                    'bg-blue-500': seg.status === 'approved',
+                                    'bg-red-400': seg.status === 'gpu_reject',
+                                    'bg-gray-400': true
+                                }"></span>
+                            <div class="min-w-0">
+                                <div class="text-gray-800 truncate" x-text="(seg.normalized_text || seg.original_text || 'No text').substring(0, 50)"></div>
+                                <div class="text-gray-400 flex gap-2">
+                                    <span x-text="seg.status"></span>
+                                    <span x-show="seg.cer != null" x-text="'CER ' + ((seg.cer * 100).toFixed(1)) + '%'"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="recentActivity.length === 0" class="text-gray-400 text-xs text-center py-4">
+                        No recent activity yet.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function homePage() {
+    return {
+        stats: {},
+        sources: [],
+        recentActivity: [],
+        newSourceInput: '',
+        newSourceLabel: '',
+        detectedType: '',
+
+        get isFirstTime() {
+            return this.sources.length === 0;
+        },
+
+        get donutSlices() {
+            const statusMap = this.stats.segment_status || {};
+            const total = this.stats.total_segments || 0;
+            if (total === 0) return [];
+
+            const circumference = 100;
+            const colors = {
+                'gpu_pass': '#22c55e', 'cpu_pass': '#4ade80', 'exported': '#16a34a',
+                'approved': '#3b82f6',
+                'gpu_reject': '#f87171', 'cpu_reject': '#fb923c',
+                'pending': '#9ca3af', 'processing': '#facc15'
+            };
+            const slices = [];
+            let offset = 0;
+            for (const [status, count] of Object.entries(statusMap)) {
+                const pct = count / total * circumference;
+                const color = colors[status] || '#d1d5db';
+                slices.push({
+                    color: color,
+                    dash: pct + ' ' + (circumference - pct),
+                    offset: -offset
+                });
+                offset += pct;
+            }
+            return slices;
+        },
+
+        detectSourceType() {
+            const input = this.newSourceInput.trim();
+            if (!input) { this.detectedType = ''; return; }
+            if (/youtube\.com\/channel\/|youtube\.com\/@|youtube\.com\/c\//.test(input)) {
+                this.detectedType = 'youtube_channel';
+            } else if (/youtube\.com\/playlist\?|list=/.test(input)) {
+                this.detectedType = 'youtube_playlist';
+            } else if (/youtube\.com\/watch\?|youtu\.be\//.test(input)) {
+                this.detectedType = 'youtube_video';
+            } else if (input.startsWith('/') || input.startsWith('~') || input.startsWith('.')) {
+                this.detectedType = input.includes('.') && !input.endsWith('/') ? 'local_file' : 'local_directory';
+            } else {
+                this.detectedType = '';
+            }
+        },
+
+        async init() {
+            await Promise.all([this.loadSources(), this.loadStats(), this.loadRecent()]);
+            setInterval(() => {
+                this.loadStats();
+                this.loadRecent();
+            }, 10000);
+        },
+
+        async loadSources() {
+            try {
+                const resp = await fetch('/api/sources');
+                this.sources = await resp.json();
+            } catch (e) {
+                console.error('Failed to load sources:', e);
+            }
+        },
+
+        async loadStats() {
+            try {
+                const resp = await fetch('/api/dashboard/stats');
+                this.stats = await resp.json();
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        },
+
+        async loadRecent() {
+            try {
+                const resp = await fetch('/api/dashboard/recent?limit=5');
+                this.recentActivity = await resp.json();
+            } catch (e) {
+                console.error('Failed to load recent:', e);
+            }
+        },
+
+        async addSource() {
+            const input = this.newSourceInput.trim();
+            if (!input) return;
+            const type = this.detectedType || 'youtube_video';
+            try {
+                const resp = await fetch('/api/sources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: type,
+                        url_or_path: input,
+                        label: this.newSourceLabel.trim() || ''
+                    })
+                });
+                if (resp.ok) {
+                    this.newSourceInput = '';
+                    this.newSourceLabel = '';
+                    this.detectedType = '';
+                    await this.loadSources();
+                }
+            } catch (e) {
+                console.error('Failed to add source:', e);
+            }
+        },
+
+        async deleteSource(id) {
+            if (!confirm('Are you sure you want to delete this source?')) return;
+            try {
+                await fetch(`/api/sources/${id}`, { method: 'DELETE' });
+                await this.loadSources();
+            } catch (e) {
+                console.error('Failed to delete source:', e);
+            }
+        },
+
+        async processAll() {
+            try {
+                await fetch('/api/pipeline/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                window.location.href = '/process';
+            } catch (e) {
+                console.error('Failed to start pipeline:', e);
+            }
+        }
+    };
+}
+</script>
+{% endblock %}
