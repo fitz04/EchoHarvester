@@ -1,11 +1,13 @@
 """Pipeline control API routes."""
 
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -39,8 +41,7 @@ async def start_pipeline(
         try:
             await orchestrator.run(stages=body.stages, resume=body.resume)
         except Exception as e:
-            import logging
-            logging.exception(f"Pipeline error: {e}")
+            logger.exception(f"Pipeline error: {e}")
 
     asyncio.create_task(run_pipeline())
 
@@ -81,8 +82,7 @@ async def run_stage(
         try:
             await orchestrator.run_stage(stage_name)
         except Exception as e:
-            import logging
-            logging.exception(f"Stage error: {e}")
+            logger.exception(f"Stage error: {e}")
 
     asyncio.create_task(run_single_stage())
 

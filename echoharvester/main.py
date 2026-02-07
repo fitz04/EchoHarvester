@@ -11,12 +11,20 @@ from tqdm import tqdm
 
 
 def setup_logging(level: str = "INFO"):
-    """Setup logging configuration."""
+    """Setup logging configuration.
+
+    Only configures the root logger at WARNING to suppress third-party noise.
+    The echoharvester logger is configured separately in Config._setup_logging().
+    """
     logging.basicConfig(
-        level=getattr(logging, level.upper()),
+        level=logging.WARNING,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
+    # echoharvester logger level is controlled by config; set a CLI default
+    # that will be overridden by Config._setup_logging() when config loads.
+    eh_logger = logging.getLogger("echoharvester")
+    eh_logger.setLevel(getattr(logging, level.upper()))
 
 
 async def run_pipeline(args):

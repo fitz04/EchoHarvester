@@ -167,6 +167,8 @@ class LoggingConfig(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file: Path | None = None
+    max_bytes: int = 50 * 1024 * 1024  # 50 MB
+    backup_count: int = 3
 
 
 class Config(BaseSettings):
@@ -225,9 +227,15 @@ class Config(BaseSettings):
     def _setup_logging(self) -> None:
         """Configure logging based on settings."""
         import logging
+        from logging.handlers import RotatingFileHandler
 
         logger = logging.getLogger("echoharvester")
         logger.setLevel(getattr(logging, self.logging.level))
+        logger.propagate = False
+
+        # Prevent handler accumulation on repeated calls
+        if logger.handlers:
+            logger.handlers.clear()
 
         formatter = logging.Formatter(self.logging.format)
 
@@ -236,12 +244,26 @@ class Config(BaseSettings):
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-        # File handler (if specified)
+        # Rotating file handler (if specified)
         if self.logging.file:
             self.logging.file.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(self.logging.file, encoding="utf-8")
+            file_handler = RotatingFileHandler(
+                self.logging.file,
+                maxBytes=self.logging.max_bytes,
+                backupCount=self.logging.backup_count,
+                encoding="utf-8",
+            )
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
+
+        # Suppress verbose third-party loggers
+        for lib_name in (
+            "transformers", "torch", "torchaudio",
+            "ctranslate2", "faster_whisper", "qwen_asr",
+            "httpcore", "httpx", "urllib3",
+            "huggingface_hub", "filelock",
+        ):
+            logging.getLogger(lib_name).setLevel(logging.WARNING)
 
 
 # Global config instance

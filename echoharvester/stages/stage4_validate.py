@@ -353,7 +353,7 @@ class ValidateStage(BaseStage):
                 min_cer = min(batch_cers) if batch_cers else 0
                 max_cer = max(batch_cers) if batch_cers else 0
 
-                logger.info(
+                logger.debug(
                     f"[Stage4] Batch {batch_num}/{total_batches}: "
                     f"pass={batch_passed}, reject={batch_rejected} "
                     f"| CER avg={avg_cer:.3f} min={min_cer:.3f} max={max_cer:.3f} "
