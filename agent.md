@@ -12,7 +12,7 @@
 ## 환경 정보
 - **OS**: WSL2 (Ubuntu 24.04) on Windows — 기존 macOS에서 이전
 - **GPU**: CUDA 지원 가능 (WSL2), `device: "auto"` 사용
-- **Python**: 3.13.5 (venv: `./venv/bin/python`)
+- **Python**: 3.12.12 (venv: `./venv/bin/python`)
 - **가상환경 활성화**: `source venv/bin/activate`
 - **faster-whisper**: CTranslate2 기반 → MPS 미지원, CPU(int8/float32)만 가능
 - **네트워크 드라이브**: `Z:` → `/mnt/z/` (drvfs, `\\DESKTOP-I7ITVII\easystore`)
@@ -77,6 +77,15 @@
 - [x] process.html: Pipeline 간소화 (수평 스테퍼, 접이식 로그/완료 단계)
 - [x] review.html: Explore + Transcribe 마스터-디테일 통합 (WaveSurfer, 필터, 키보드 단축키)
 - [x] 이전 템플릿 _archive 폴더로 이동
+
+### Phase 13: k2 + icefall 백엔드 설치
+- [x] PyTorch 2.10.0 → 2.9.1 다운그레이드
+- [x] k2 1.24.4 pre-built CUDA wheel 설치 (cuda12.8)
+- [x] icefall 1.0 editable 설치 (`/mnt/c/work/icefall`)
+- [x] k2 CUDA Swoosh 커널 활성화 확인 (`_k2_available = True`)
+- [x] 기존 249 tests 전체 PASS
+- [x] config.yaml → Zipformer2 CTC로 전환
+- [x] Zipformer2 CTC 2 에포크 훈련 검증 (val_loss 2.92)
 
 ---
 
@@ -575,14 +584,89 @@ WSL2에서 네트워크 드라이브 `\\DESKTOP-I7ITVII\easystore`를 마운트�
 #### 검증
 - 기존 249 tests 전체 PASS (regression 없음)
 
+### Phase 13: k2 + icefall 백엔드 설치
+**시작일**: 2026-02-09
+**상태**: 완료
+
+#### 개요
+기존 Zipformer2 코드는 icefall에서 vendor한 pure-PyTorch 구현 사용.
+k2 설치로 Swoosh 활성 함수 CUDA 커널 활성화 → 훈련 5-20% 속도 향상 기대.
+icefall editable 설치로 향후 N-best/Lattice 디코딩, HLG 그래프 디코딩 가능.
+
+#### 설치 내역
+
+| 패키지 | 변경 전 | 변경 후 |
+|--------|---------|---------|
+| PyTorch | 2.10.0+cu126 | **2.9.1+cu128** |
+| torchaudio | 2.10.0+cu126 | **2.9.1** |
+| k2 | (없음) | **1.24.4.dev20251118+cuda12.8.torch2.9.1** |
+| icefall | (없음) | **1.0** (editable, `/mnt/c/work/icefall`) |
+
+**PyTorch 다운그레이드 사유**: k2 pre-built wheel이 2.10.0에는 미제공, 2.9.1에는 제공됨.
+코드베이스에 PyTorch 2.10 전용 API 사용 없음 → 다운그레이드 안전.
+
+**CUDA 버전 주의**: PyTorch 2.9.1은 cu12.8 번들. k2 wheel도 반드시 `cuda12.8` 태그 사용 필요.
+(cuda12.9 wheel 설치 시 `ImportError: k2 was built using CUDA 12.9 But you are using CUDA 12.8` 발생)
+
+#### k2 CUDA 커널 활성화 확인
+- `scaling.py`의 `_k2_available = True` 자동 설정
+- `SwooshL`, `SwooshR` CUDA forward+backward pass 정상 동작
+- 별도 코드 수정 없음 (기존 `try: import k2` 패턴으로 자동 활성화)
+
+#### icefall 추가 의존성 (자동 설치됨)
+- kaldifst, kaldilm, kaldialign, kaldi-decoder, sentencepiece
+- tensorboard, onnx, onnxruntime, onnxoptimizer, onnxsim
+- num2words, pypinyin, pycantonese, typeguard, dill
+
+#### 검증
+- `import k2` → OK, `k2.with_cuda = True`
+- `k2.swoosh_l(torch.randn(10, device='cuda'))` → CUDA 커널 정상 동작
+- `import icefall` → OK (`/mnt/c/work/icefall/icefall/__init__.py`)
+- 기존 249 tests 전체 PASS (regression 없음)
+
+#### k2 Swoosh CUDA 커널 벤치마크
+
+| 구분 | k2 CUDA | pure-torch | 속도 향상 |
+|------|---------|------------|-----------|
+| Forward only | ~34ms | ~35ms | ~1.0x (차이 없음) |
+| **Forward+Backward** | **244ms** | **312ms** | **~1.28x** |
+
+- Forward는 차이 없으나 **backward pass에서 ~28% 빠름** (fused kernel으로 메모리 접근 감소)
+- Swoosh가 모델 전체 연산의 일부이므로 실제 훈련 속도 향상은 **5~10%** 수준
+
+#### Zipformer2 CTC 훈련 검증 (k2 활성 상태)
+
+| 항목 | 값 |
+|------|-----|
+| 모델 | Zipformer2 CTC, **64.2M params** |
+| 데이터 | 17,274 cuts (~30.7h), 3 도메인 (temp/radio/medical) |
+| Epoch 1 | train_loss: 8.37, val_loss: 4.29, 601.8초 |
+| Epoch 2 | train_loss: 3.47, val_loss: 2.92, 593.6초 |
+| 50 steps 간격 | ~25.5초 (안정적) |
+| 체크포인트 | `exp/epoch-1.pt`, `exp/epoch-2.pt`, `exp/best.pt` |
+
+#### config.yaml 변경
+- `training.model.type`: `conformer_ctc` → **`zipformer_ctc`** 로 전환
+- Conformer 설정은 주석 처리하여 보존
+- 현재 활성 모델: Zipformer2 CTC (6스택, 192~512 dim)
+
 ---
 
 ## 향후 계획
+
+### Zipformer2 본격 훈련 (50 에포크)
+- 현재 2 에포크만 돌림 (val_loss 2.92), 50 에포크까지 `--resume` 사용
+- `python -c "from echoharvester.main import main; import sys; sys.argv = ['e', 'train', 'run', '--epochs', '50', '--resume']; main()"`
+- 또는 Training Web UI에서 Resume 체크포인트 선택 후 Start
 
 ### Icefall 허브 프리트레인 모델 다운로드
 - Icefall에서 제공하는 공개 한국어 모델을 UI에서 직접 다운로드
 - 다운로드한 모델의 아키텍처 파라미터 자동 반영 (config 역매핑)
 - 현재는 `.pt` 파일을 `./exp/` 폴더에 수동 복사하면 Pretrained Model 목록에 표시됨
+
+### k2 Lattice 디코딩 통합
+- k2 설치 완료로 N-best / Lattice 디코딩 구현 가능
+- HLG 그래프 디코딩, LM 통합 (향후)
 
 ---
 
@@ -608,6 +692,19 @@ WSL2에서 네트워크 드라이브 `\\DESKTOP-I7ITVII\easystore`를 마운트�
 - WSL2 부팅 후 매번 마운트 필요: `wsl.exe -u root -- bash -c "mkdir -p /mnt/z && mount -t drvfs Z: /mnt/z"`
 - WSL2는 9p 프로토콜 사용, drvfs 마운트된 네트워크 드라이브는 읽기 성능이 로컬보다 느림
 - `/etc/fstab` 영구 마운트 가능: `Z: /mnt/z drvfs defaults 0 0`
+
+### k2 + icefall 설치 재현 (새 환경에서)
+```bash
+source venv/bin/activate
+pip install torch==2.9.1 torchaudio==2.9.1
+# CUDA 버전 확인: python -c "import torch; print(torch.version.cuda)"
+# cu12.8이면 cuda12.8 태그, cu12.6이면 cuda12.6 태그 사용
+pip install k2==1.24.4.dev20251118+cuda12.8.torch2.9.1 -f https://k2-fsa.github.io/k2/cuda.html
+cd /mnt/c/work/icefall && pip install -e .
+# 검증: python -c "import k2; print(k2.with_cuda)"
+```
+- k2 wheel 목록: https://k2-fsa.github.io/k2/cuda.html
+- **주의**: k2 wheel의 CUDA 버전이 PyTorch 번들 CUDA 버전과 정확히 일치해야 함
 
 ### 파이프라인 상태 관리
 - SQLite DB에 모든 상태 저장 → 중단 후 재개 가능

@@ -122,24 +122,24 @@ training:
     type: "char"                       # character-level (한글 음절)
   features:
     num_mel_bins: 80                   # Mel 필터뱅크 차원
-  model:
-    type: "conformer_ctc"              # 모델 타입: conformer_ctc 또는 zipformer_ctc
-    attention_dim: 256                 # 어텐션 차원
-    num_encoder_layers: 12             # 인코더 레이어 수
-    num_attention_heads: 4             # 어텐션 헤드 수
-    feedforward_dim: 2048              # FFN 차원
-    depthwise_conv_kernel_size: 31     # ConvModule 커널 크기
-    dropout: 0.1                       # 드롭아웃
-  # Zipformer2 모델 사용 시 아래 설정으로 교체:
+  # Conformer CTC 모델:
   # model:
-  #   type: "zipformer_ctc"
-  #   encoder_dim: "192,256,384,512,384,256"        # 스택별 인코더 차원
-  #   num_encoder_layers: "2,2,3,4,3,2"             # 스택별 레이어 수
-  #   num_heads: "4,4,4,8,4,4"                      # 스택별 어텐션 헤드 수
-  #   feedforward_dim: "512,768,1024,1536,1024,768"  # 스택별 FFN 차원
-  #   cnn_module_kernel: "31,31,15,15,15,31"         # 스택별 Conv 커널
-  #   downsampling_factor: "1,2,4,8,4,2"             # 스택별 다운샘플링
+  #   type: "conformer_ctc"
+  #   attention_dim: 256
+  #   num_encoder_layers: 12
+  #   num_attention_heads: 4
+  #   feedforward_dim: 2048
+  #   depthwise_conv_kernel_size: 31
   #   dropout: 0.1
+  model:
+    type: "zipformer_ctc"
+    encoder_dim: "192,256,384,512,384,256"        # 스택별 인코더 차원
+    num_encoder_layers: "2,2,3,4,3,2"             # 스택별 레이어 수
+    num_heads: "4,4,4,8,4,4"                      # 스택별 어텐션 헤드 수
+    feedforward_dim: "512,768,1024,1536,1024,768"  # 스택별 FFN 차원
+    cnn_module_kernel: "31,31,15,15,15,31"         # 스택별 Conv 커널
+    downsampling_factor: "1,2,4,8,4,2"             # 스택별 다운샘플링
+    dropout: 0.1
   training_params:
     num_epochs: 50                     # 전체 에포크 수
     max_duration: 200.0                # 배치당 최대 오디오 길이 (초)
