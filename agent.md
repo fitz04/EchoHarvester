@@ -493,6 +493,48 @@ WSL2에서 네트워크 드라이브 `\\DESKTOP-I7ITVII\easystore`를 마운트�
 - Monitor 탭에서 loss 수렴 확인
 - 향후 필요 시 대규모 데이터 랜덤 샘플링 유틸리티 구현
 
+### Phase 11: Pretrained Model Fine-tuning 지원
+**시작일**: 2026-02-08
+**상태**: 완료
+
+#### 개요
+기존 스크래치 훈련만 지원하던 Training 모듈에 프리트레인 모델 파인튜닝 기능 추가.
+동일 아키텍처 내 key-by-key 가중치 로딩, 인코더 프리징, epoch 기반 warmup 지원.
+
+#### 변경 파일 (5개)
+
+**`echoharvester/training/config.py`**
+- `TrainingParamsConfig`에 `warmup_epochs: float = 0` 필드 추가
+- `warmup_epochs > 0`이면 `warm_step` 자동 계산 (에폭 비율 × steps_per_epoch)
+
+**`echoharvester/training/trainer.py`**
+- `_load_pretrained(model, path)`: key-by-key shape 매칭, 불일치 시 skip + 로그
+- `_freeze_encoder(model)`: output_proj 외 전체 파라미터 freeze
+- `_unfreeze_all(model)`: 전체 파라미터 unfreeze
+- `train()` 시그니처 확장: `pretrained_checkpoint`, `freeze_encoder_epochs` 추가
+- 데이터로더 생성 후 `warmup_epochs → warm_step` 변환 (NoamScheduler 생성 전)
+- 에폭 루프에 freeze/unfreeze 로직 (start_epoch 기준)
+- 새 이벤트: `pretrained_loaded`, `encoder_frozen`, `encoder_unfrozen`
+
+**`echoharvester/main.py`**
+- `train run` 서브파서에 `--pretrained`, `--freeze-encoder-epochs` 인자 추가
+- `trainer.train()` 호출 시 전달
+
+**`echoharvester/api/routes/training.py`**
+- POST `/training/start` body에서 `pretrained_checkpoint`, `freeze_encoder_epochs` 수용
+- `lr_factor`, `warmup_epochs`, `warm_step` 오버라이드도 body에서 수용
+- `trainer.train()` 호출 시 전달
+
+**`echoharvester/web/templates/training.html`**
+- 상태 변수: `pretrainedCheckpoint`, `freezeEncoderEpochs`
+- Training Parameters에 `Warmup Epochs` 필드 추가 (>0이면 Warmup Steps 비활성)
+- Device/Resume 아래에 Fine-tuning 행: Pretrained Model 드롭다운 + Freeze Encoder 입력
+  - Resume 선택 시 Fine-tuning 행 숨김 (상호배타)
+  - Pretrained 미선택 시 Freeze 비활성
+- `onPretrainedChange()`: 파인튜닝 선택 시 lr_factor=0.5, warmup_epochs=0.5, freeze=3 프리셋
+- `startTraining()`: body에 pretrained/freeze/lr_factor/warmup_epochs/warm_step 전송
+- WS 이벤트 핸들러: `pretrained_loaded`, `encoder_frozen`, `encoder_unfrozen` → 로그 출력
+
 ---
 
 ## 기술 노트

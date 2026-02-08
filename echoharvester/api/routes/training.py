@@ -212,10 +212,20 @@ async def start_training(request: Request):
 
     body = await request.json() if request.headers.get("content-type") == "application/json" else {}
     resume_checkpoint = body.get("resume_checkpoint")
+    pretrained_checkpoint = body.get("pretrained_checkpoint")
+    freeze_encoder_epochs = int(body.get("freeze_encoder_epochs", 0))
     epochs_override = body.get("num_epochs")
 
     if epochs_override:
         tc.training_params.num_epochs = int(epochs_override)
+
+    # Apply training param overrides from UI
+    if "lr_factor" in body:
+        tc.training_params.lr_factor = float(body["lr_factor"])
+    if "warmup_epochs" in body:
+        tc.training_params.warmup_epochs = float(body["warmup_epochs"])
+    if "warm_step" in body:
+        tc.training_params.warm_step = int(body["warm_step"])
 
     ts.state = "training"
     ts.error = None
@@ -231,7 +241,12 @@ async def start_training(request: Request):
 
             trainer = Trainer(tc, progress_callback=callback)
             ts.trainer = trainer
-            stats = await asyncio.to_thread(trainer.train, resume_checkpoint)
+            stats = await asyncio.to_thread(
+                trainer.train,
+                resume_checkpoint=resume_checkpoint,
+                pretrained_checkpoint=pretrained_checkpoint,
+                freeze_encoder_epochs=freeze_encoder_epochs,
+            )
             ts.best_val_loss = stats.get("best_val_loss", float("inf"))
             ts.best_epoch = stats.get("best_epoch", 0)
         except Exception as e:

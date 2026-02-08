@@ -116,6 +116,11 @@ def create_dataloader(
 
     cuts = CutSet.from_jsonl_lazy(cuts_path)
 
+    # Filter out excessively long cuts that exceed PE max_len (10000 frames)
+    # 30s * 100 frames/s / 4x subsampling = 750 frames (well within limit)
+    max_cut_duration = 30.0
+    cuts = cuts.filter(lambda c: c.duration <= max_cut_duration)
+
     # SimpleCutSampler is more robust for small/medium datasets
     sampler = SimpleCutSampler(
         cuts,

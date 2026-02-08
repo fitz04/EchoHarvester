@@ -157,9 +157,18 @@
                                 class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
                         </div>
                         <div>
+                            <label class="block text-xs text-gray-500 mb-1">Warmup Epochs</label>
+                            <input type="number" x-model.number="config.training_params.warmup_epochs" step="0.1" min="0"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            <p class="text-xs text-gray-400 mt-0.5" x-show="config.training_params.warmup_epochs > 0">Overrides warm_step</p>
+                        </div>
+                        <div>
                             <label class="block text-xs text-gray-500 mb-1">Warmup Steps</label>
                             <input type="number" x-model.number="config.training_params.warm_step"
+                                :disabled="config.training_params.warmup_epochs > 0"
+                                :class="config.training_params.warmup_epochs > 0 ? 'bg-gray-100 text-gray-400' : ''"
                                 class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            <p class="text-xs text-gray-400 mt-0.5" x-show="config.training_params.warmup_epochs > 0">Auto-calculated</p>
                         </div>
                         <div>
                             <label class="block text-xs text-gray-500 mb-1">Grad Clip Norm</label>
@@ -183,13 +192,37 @@
                     </div>
                     <div>
                         <label class="block text-xs text-gray-500 mb-1">Resume From</label>
-                        <select x-model="resumeCheckpoint"
+                        <select x-model="resumeCheckpoint" @change="if (resumeCheckpoint) pretrainedCheckpoint = ''"
                             class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
                             <option value="">None (fresh start)</option>
                             <template x-for="ckpt in checkpoints" :key="ckpt.path">
                                 <option :value="ckpt.path" x-text="ckpt.name + ' (' + ckpt.size_mb + ' MB)' + (ckpt.is_best ? ' *' : '')"></option>
                             </template>
                         </select>
+                    </div>
+                </div>
+
+                <!-- Fine-tuning (hidden when Resume is selected) -->
+                <div x-show="!resumeCheckpoint" class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Pretrained Model</label>
+                        <select x-model="pretrainedCheckpoint" @change="onPretrainedChange()"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            <option value="">None (train from scratch)</option>
+                            <template x-for="ckpt in checkpoints" :key="ckpt.path">
+                                <option :value="ckpt.path" x-text="ckpt.name + ' (' + ckpt.size_mb + ' MB)' + (ckpt.is_best ? ' *' : '')"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Freeze Encoder</label>
+                        <div class="flex items-center gap-2">
+                            <input type="number" x-model.number="freezeEncoderEpochs" min="0"
+                                :disabled="!pretrainedCheckpoint"
+                                :class="!pretrainedCheckpoint ? 'bg-gray-100 text-gray-400' : ''"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            <span class="text-xs text-gray-500 whitespace-nowrap">epochs</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -598,12 +631,14 @@ function trainingPage() {
         config: {
             shar_sources: [],
             model: { type: 'conformer_ctc', attention_dim: 256, num_encoder_layers: 12, num_attention_heads: 4, dropout: 0.1, encoder_dim: '', num_encoder_layers_z: '' },
-            training_params: { num_epochs: 50, lr_factor: 2.5, warm_step: 5000, clip_grad_norm: 5.0 },
+            training_params: { num_epochs: 50, lr_factor: 2.5, warm_step: 5000, warmup_epochs: 0, clip_grad_norm: 5.0 },
             device: 'auto',
         },
         dataStats: { prepared: false },
         checkpoints: [],
         resumeCheckpoint: '',
+        pretrainedCheckpoint: '',
+        freezeEncoderEpochs: 0,
 
         // Status (from WS + API)
         status: {
@@ -616,6 +651,7 @@ function trainingPage() {
             best_val_loss: null,
             best_epoch: 0,
             error: null,
+            steps: [],
             epochs: [],
         },
 
@@ -788,10 +824,20 @@ function trainingPage() {
             if (evt === 'train_start') {
                 this.status.state = 'training';
                 this.status.total_epochs = data.total_epochs;
+                this.status.steps = [];
                 this.status.epochs = [];
                 this.addLog(`Training started: ${data.model_type}, ${(data.num_params / 1e6).toFixed(1)}M params, ${data.total_epochs} epochs`);
                 this.startMonitorTimer();
                 this.activeTab = 'monitor';
+            }
+            if (evt === 'pretrained_loaded') {
+                this.addLog(`Pretrained loaded: ${data.loaded}/${data.loaded + data.skipped} params from ${data.path}`);
+            }
+            if (evt === 'encoder_frozen') {
+                this.addLog(`Encoder frozen until epoch ${data.until_epoch}`);
+            }
+            if (evt === 'encoder_unfrozen') {
+                this.addLog(`Encoder unfrozen at epoch ${data.epoch}`);
             }
             if (evt === 'epoch_start') {
                 this.status.current_epoch = data.epoch;
@@ -799,7 +845,9 @@ function trainingPage() {
             if (evt === 'batch_update') {
                 this.status.train_loss = data.loss;
                 this.status.lr = data.lr;
+                this.status.steps.push({ step: data.step, loss: data.loss, lr: data.lr });
                 this.addLog(`[Epoch ${data.epoch}] step ${data.step}, loss: ${data.loss.toFixed(4)}, lr: ${data.lr.toExponential(1)}`);
+                this.drawCharts();
             }
             if (evt === 'epoch_complete') {
                 this.status.train_loss = data.train_loss;
@@ -908,11 +956,32 @@ function trainingPage() {
             } catch (e) { console.error('Prepare failed:', e); }
         },
 
+        onPretrainedChange() {
+            if (this.pretrainedCheckpoint) {
+                // Fine-tuning recommended values
+                this.config.training_params.lr_factor = 0.5;
+                this.config.training_params.warmup_epochs = 0.5;
+                this.freezeEncoderEpochs = 3;
+            } else {
+                // Scratch training defaults
+                this.config.training_params.lr_factor = 2.5;
+                this.config.training_params.warmup_epochs = 0;
+                this.freezeEncoderEpochs = 0;
+            }
+        },
+
         async startTraining() {
             try {
                 const body = {};
                 if (this.resumeCheckpoint) body.resume_checkpoint = this.resumeCheckpoint;
                 if (this.config.training_params.num_epochs) body.num_epochs = this.config.training_params.num_epochs;
+                if (this.pretrainedCheckpoint && !this.resumeCheckpoint) {
+                    body.pretrained_checkpoint = this.pretrainedCheckpoint;
+                    body.freeze_encoder_epochs = this.freezeEncoderEpochs;
+                }
+                body.lr_factor = this.config.training_params.lr_factor;
+                body.warmup_epochs = this.config.training_params.warmup_epochs;
+                body.warm_step = this.config.training_params.warm_step;
 
                 await fetch('/api/training/start', {
                     method: 'POST',
@@ -973,26 +1042,33 @@ function trainingPage() {
 
             ctx.clearRect(0, 0, W, H);
 
+            const steps = this.status.steps || [];
             const epochs = this.status.epochs || [];
-            if (epochs.length < 1) {
+            if (steps.length < 1 && epochs.length < 1) {
                 ctx.fillStyle = '#9ca3af';
                 ctx.font = '13px system-ui';
                 ctx.textAlign = 'center';
-                ctx.fillText('No epoch data yet', W / 2, H / 2);
+                ctx.fillText('No data yet', W / 2, H / 2);
                 return;
             }
 
-            const trainLosses = epochs.map(e => e.train_loss);
-            const valLosses = epochs.map(e => e.val_loss).filter(v => v !== null && v !== undefined);
-            const allVals = [...trainLosses, ...valLosses].filter(v => v !== null && v !== undefined && isFinite(v));
+            // Collect all loss values to determine Y range
+            const stepLosses = steps.map(s => s.loss).filter(v => isFinite(v));
+            const valLosses = epochs.map(e => e.val_loss).filter(v => v !== null && v !== undefined && isFinite(v));
+            const allVals = [...stepLosses, ...valLosses];
+            if (allVals.length < 1) return;
             const minY = Math.min(...allVals) * 0.9;
             const maxY = Math.max(...allVals) * 1.1;
             const rangeY = maxY - minY || 1;
 
+            // Determine X range (step numbers)
+            const maxStep = steps.length > 0 ? steps[steps.length - 1].step : 0;
+            const xMax = Math.max(maxStep, 1);
+
             const chartW = W - pad.left - pad.right;
             const chartH = H - pad.top - pad.bottom;
 
-            const xScale = (i) => pad.left + (i / Math.max(epochs.length - 1, 1)) * chartW;
+            const xScale = (step) => pad.left + (step / xMax) * chartW;
             const yScale = (v) => pad.top + chartH - ((v - minY) / rangeY) * chartH;
 
             // Grid lines
@@ -1012,39 +1088,62 @@ function trainingPage() {
                 ctx.fillText(val.toFixed(2), pad.left - 5, y + 3);
             }
 
-            // X-axis labels
+            // X-axis labels (step numbers)
             ctx.fillStyle = '#9ca3af';
             ctx.font = '10px system-ui';
             ctx.textAlign = 'center';
-            const step = Math.max(1, Math.floor(epochs.length / 10));
-            for (let i = 0; i < epochs.length; i += step) {
-                ctx.fillText(epochs[i].epoch, xScale(i), H - 5);
+            const labelCount = 10;
+            const stepInterval = Math.max(1, Math.floor(xMax / labelCount));
+            for (let s = 0; s <= xMax; s += stepInterval) {
+                ctx.fillText(s, xScale(s), H - 5);
             }
-            if (epochs.length > 1) {
-                ctx.fillText(epochs[epochs.length - 1].epoch, xScale(epochs.length - 1), H - 5);
+            // Always show last step
+            if (xMax % stepInterval !== 0) {
+                ctx.fillText(xMax, xScale(xMax), H - 5);
             }
 
-            // Train loss line (blue)
-            this._drawLine(ctx, epochs, (e, i) => ({ x: xScale(i), y: yScale(e.train_loss) }), '#3b82f6', 2);
+            // Step-level train loss line (blue)
+            if (steps.length > 0) {
+                this._drawLine(ctx, steps, (s) => ({ x: xScale(s.step), y: yScale(s.loss) }), '#3b82f6', 1.5);
+            }
 
-            // Val loss line (orange)
-            const valEpochs = epochs.filter(e => e.val_loss !== null && e.val_loss !== undefined);
-            if (valEpochs.length > 0) {
-                const valIndices = epochs.reduce((acc, e, i) => {
-                    if (e.val_loss !== null && e.val_loss !== undefined) acc.push(i);
-                    return acc;
-                }, []);
-                this._drawLine(ctx, valIndices, (idx) => ({ x: xScale(idx), y: yScale(epochs[idx].val_loss) }), '#f97316', 2);
+            // Epoch val_loss markers (orange dots)
+            for (const ep of epochs) {
+                if (ep.val_loss === null || ep.val_loss === undefined) continue;
+                // Find the closest step to this epoch boundary
+                // Use the last step of that epoch if available, otherwise estimate
+                let epStep = xMax;  // fallback
+                if (ep.total_steps) {
+                    epStep = ep.total_steps;
+                } else {
+                    // Find the step closest to this epoch end in the steps array
+                    // Epochs are 1-indexed; estimate step position proportionally
+                    const totalEpochs = this.status.total_epochs || epochs.length;
+                    epStep = Math.round((ep.epoch / totalEpochs) * xMax);
+                }
+                const cx = xScale(epStep);
+                const cy = yScale(ep.val_loss);
+                // Draw dot
+                ctx.beginPath();
+                ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+                ctx.fillStyle = '#f97316';
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
             }
 
             // Legend
             ctx.font = '11px system-ui';
+            ctx.textAlign = 'left';
             ctx.fillStyle = '#3b82f6';
-            ctx.fillRect(W - pad.right - 130, pad.top, 10, 3);
-            ctx.fillText('train_loss', W - pad.right - 115, pad.top + 5);
+            ctx.fillRect(W - pad.right - 150, pad.top, 10, 3);
+            ctx.fillText('train_loss', W - pad.right - 135, pad.top + 5);
             ctx.fillStyle = '#f97316';
-            ctx.fillRect(W - pad.right - 60, pad.top, 10, 3);
-            ctx.fillText('val_loss', W - pad.right - 45, pad.top + 5);
+            ctx.beginPath();
+            ctx.arc(W - pad.right - 60, pad.top + 2, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillText('val_loss', W - pad.right - 52, pad.top + 5);
         },
 
         drawLrChart() {
@@ -1057,15 +1156,17 @@ function trainingPage() {
 
             ctx.clearRect(0, 0, W, H);
 
-            const epochs = this.status.epochs || [];
-            if (epochs.length < 1) return;
+            const steps = this.status.steps || [];
+            if (steps.length < 1) return;
 
-            const lrs = epochs.map(e => e.lr || 0);
+            const lrs = steps.map(s => s.lr || 0);
             const maxLr = Math.max(...lrs) * 1.1 || 1e-3;
+            const maxStep = steps[steps.length - 1].step;
+            const xMax = Math.max(maxStep, 1);
             const chartW = W - pad.left - pad.right;
             const chartH = H - pad.top - pad.bottom;
 
-            const xScale = (i) => pad.left + (i / Math.max(epochs.length - 1, 1)) * chartW;
+            const xScale = (step) => pad.left + (step / xMax) * chartW;
             const yScale = (v) => pad.top + chartH - (v / maxLr) * chartH;
 
             // Grid
@@ -1082,8 +1183,19 @@ function trainingPage() {
             ctx.fillText(maxLr.toExponential(1), pad.left - 5, pad.top + 10);
             ctx.fillText('0', pad.left - 5, pad.top + chartH + 3);
 
+            // X-axis labels (step numbers)
+            ctx.textAlign = 'center';
+            const labelCount = 10;
+            const stepInterval = Math.max(1, Math.floor(xMax / labelCount));
+            for (let s = 0; s <= xMax; s += stepInterval) {
+                ctx.fillText(s, xScale(s), H - 3);
+            }
+            if (xMax % stepInterval !== 0) {
+                ctx.fillText(xMax, xScale(xMax), H - 3);
+            }
+
             // LR line (purple)
-            this._drawLine(ctx, epochs, (e, i) => ({ x: xScale(i), y: yScale(e.lr || 0) }), '#8b5cf6', 1.5);
+            this._drawLine(ctx, steps, (s) => ({ x: xScale(s.step), y: yScale(s.lr || 0) }), '#8b5cf6', 1.5);
         },
 
         _drawLine(ctx, data, pointFn, color, width) {

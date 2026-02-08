@@ -107,6 +107,7 @@ class TrainingParamsConfig(BaseModel):
     max_duration: float = 200.0
     lr_factor: float = 2.5
     warm_step: int = 5000
+    warmup_epochs: float = 0  # 0 = use warm_step directly, >0 = epoch-based warmup (overrides warm_step)
     weight_decay: float = 1e-6
     clip_grad_norm: float = 5.0
     log_interval: int = 50

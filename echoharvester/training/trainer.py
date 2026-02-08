@@ -39,11 +39,54 @@ class Trainer:
         if self.progress_callback:
             self.progress_callback(event)
 
-    def train(self, resume_checkpoint: str | None = None) -> dict:
+    def _load_pretrained(self, model, path: str) -> tuple[int, int]:
+        """Load pretrained weights with key-by-key shape matching.
+
+        Returns (loaded, skipped) counts.
+        """
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        source_state = checkpoint.get("model_state_dict", checkpoint)
+        target_state = model.state_dict()
+        loaded, skipped = 0, 0
+
+        for key, value in source_state.items():
+            if key in target_state and target_state[key].shape == value.shape:
+                target_state[key] = value
+                loaded += 1
+            else:
+                reason = (
+                    "not in model"
+                    if key not in target_state
+                    else f"shape {value.shape} vs {target_state[key].shape}"
+                )
+                logger.warning(f"Pretrained skip: {key} ({reason})")
+                skipped += 1
+
+        model.load_state_dict(target_state)
+        logger.info(f"Loaded {loaded}/{loaded + skipped} params from {path}")
+        return loaded, skipped
+
+    def _freeze_encoder(self, model):
+        """Freeze all parameters except output_proj (decoder head)."""
+        for name, param in model.named_parameters():
+            if not name.startswith("output_proj"):
+                param.requires_grad = False
+
+    def _unfreeze_all(self, model):
+        """Unfreeze all model parameters."""
+        for param in model.parameters():
+            param.requires_grad = True
+
+    def train(self, resume_checkpoint: str | None = None,
+              pretrained_checkpoint: str | None = None,
+              freeze_encoder_epochs: int = 0) -> dict:
         """Run the full training loop.
 
         Args:
             resume_checkpoint: Path to checkpoint to resume from.
+            pretrained_checkpoint: Path to pretrained checkpoint for fine-tuning.
+                Ignored if resume_checkpoint is set.
+            freeze_encoder_epochs: Number of epochs to freeze encoder (0 = no freeze).
 
         Returns:
             Final training statistics.
@@ -70,6 +113,16 @@ class Trainer:
         num_params = model.get_num_params()
         logger.info(f"Model parameters: {num_params:,} ({num_params / 1e6:.1f}M)")
 
+        # Load pretrained weights (only for fresh fine-tuning, not resume)
+        if pretrained_checkpoint and not resume_checkpoint:
+            loaded, skipped = self._load_pretrained(model, pretrained_checkpoint)
+            self._emit({
+                "event": "pretrained_loaded",
+                "path": pretrained_checkpoint,
+                "loaded": loaded,
+                "skipped": skipped,
+            })
+
         # Optimizer
         optimizer = torch.optim.AdamW(
             model.parameters(),
@@ -77,20 +130,36 @@ class Trainer:
             weight_decay=params.weight_decay,
         )
 
+        # CTC loss
+        ctc_loss = nn.CTCLoss(blank=tokenizer.blank_id, reduction="mean", zero_infinity=True)
+
+        # Create data loaders (needed before scheduler for warmup_epochs calculation)
+        logger.info("Creating data loaders...")
+        train_dl = create_dataloader("train", self.config, tokenizer, is_training=True)
+        val_dl = create_dataloader("val", self.config, tokenizer, is_training=False)
+
         # LR scheduler — d_model depends on model type
         if hasattr(self.config.model, "attention_dim"):
             d_model = self.config.model.attention_dim
         else:
             d_model = self.config.model.max_encoder_dim
+
+        # Compute warm_step: warmup_epochs overrides if > 0
+        warm_step = params.warm_step
+        if params.warmup_epochs > 0:
+            steps_per_epoch = len(train_dl)
+            warm_step = max(1, int(params.warmup_epochs * steps_per_epoch))
+            logger.info(
+                f"warmup_epochs={params.warmup_epochs} × {steps_per_epoch} steps/epoch "
+                f"→ warm_step={warm_step}"
+            )
+
         scheduler = NoamScheduler(
             optimizer,
             d_model=d_model,
-            warm_step=params.warm_step,
+            warm_step=warm_step,
             factor=params.lr_factor,
         )
-
-        # CTC loss
-        ctc_loss = nn.CTCLoss(blank=tokenizer.blank_id, reduction="mean", zero_infinity=True)
 
         # Resume from checkpoint
         start_epoch = 1
@@ -100,11 +169,6 @@ class Trainer:
                 resume_checkpoint, model, optimizer, scheduler
             )
             start_epoch += 1
-
-        # Create data loaders
-        logger.info("Creating data loaders...")
-        train_dl = create_dataloader("train", self.config, tokenizer, is_training=True)
-        val_dl = create_dataloader("val", self.config, tokenizer, is_training=False)
 
         # TensorBoard writer (optional)
         tb_writer = self._create_tb_writer()
@@ -133,6 +197,23 @@ class Trainer:
                 logger.info(f"Training stopped by user at epoch {epoch}")
                 self._emit({"event": "train_stopped", "epoch": epoch - 1})
                 break
+
+            # Encoder freeze/unfreeze for fine-tuning
+            if freeze_encoder_epochs > 0:
+                if epoch == start_epoch:
+                    self._freeze_encoder(model)
+                    logger.info(
+                        f"Encoder frozen for epochs {start_epoch}-"
+                        f"{start_epoch + freeze_encoder_epochs - 1}"
+                    )
+                    self._emit({
+                        "event": "encoder_frozen",
+                        "until_epoch": start_epoch + freeze_encoder_epochs - 1,
+                    })
+                elif epoch == start_epoch + freeze_encoder_epochs:
+                    self._unfreeze_all(model)
+                    logger.info(f"Encoder unfrozen at epoch {epoch}")
+                    self._emit({"event": "encoder_unfrozen", "epoch": epoch})
 
             epoch_start = time.time()
             self._emit({"event": "epoch_start", "epoch": epoch})

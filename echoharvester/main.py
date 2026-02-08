@@ -202,7 +202,11 @@ def train_run(args):
     from echoharvester.training.trainer import Trainer
 
     trainer = Trainer(tc)
-    stats = trainer.train(resume_checkpoint=args.resume)
+    stats = trainer.train(
+        resume_checkpoint=args.resume,
+        pretrained_checkpoint=args.pretrained,
+        freeze_encoder_epochs=args.freeze_encoder_epochs,
+    )
     print(f"\nTraining complete:")
     print(f"  Best val_loss: {stats['best_val_loss']} (epoch {stats['best_epoch']})")
 
@@ -381,6 +385,18 @@ def main():
         type=int,
         default=None,
         help="Override number of epochs",
+    )
+    train_run_parser.add_argument(
+        "--pretrained",
+        type=str,
+        default=None,
+        help="Path to pretrained checkpoint for fine-tuning",
+    )
+    train_run_parser.add_argument(
+        "--freeze-encoder-epochs",
+        type=int,
+        default=0,
+        help="Number of epochs to freeze encoder (0 = no freeze)",
     )
 
     # train status
