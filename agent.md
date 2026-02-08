@@ -535,6 +535,30 @@ WSL2에서 네트워크 드라이브 `\\DESKTOP-I7ITVII\easystore`를 마운트�
 - `startTraining()`: body에 pretrained/freeze/lr_factor/warmup_epochs/warm_step 전송
 - WS 이벤트 핸들러: `pretrained_loaded`, `encoder_frozen`, `encoder_unfrozen` → 로그 출력
 
+### Phase 12: Training UI 프리셋 자동 적용
+**시작일**: 2026-02-09
+**상태**: 완료
+
+#### 변경 파일 (1개)
+- `echoharvester/web/templates/training.html`
+
+#### 변경 내용
+- `MODEL_PRESETS` 상수 추가 (Conformer CTC / Zipformer CTC 기본값)
+- 초기 `config.model`을 프리셋 기반으로 변경 (빈 문자열 제거)
+- Model Type 라디오 버튼에 `@change="onModelTypeChange()"` 추가
+- `onModelTypeChange()`: 타입 전환 시 해당 프리셋으로 전체 교체
+- `loadConfig()`에서 API 응답 머지 시 프리셋 기반 폴백 적용
+- Zipformer UI 필드 확장: encoder_dim + num_encoder_layers + dropout 기본 표시, Advanced 접힘 영역에 num_heads, feedforward_dim, cnn_module_kernel, downsampling_factor 추가
+
+---
+
+## 향후 계획
+
+### Icefall 허브 프리트레인 모델 다운로드
+- Icefall에서 제공하는 공개 한국어 모델을 UI에서 직접 다운로드
+- 다운로드한 모델의 아키텍처 파라미터 자동 반영 (config 역매핑)
+- 현재는 `.pt` 파일을 `./exp/` 폴더에 수동 복사하면 Pretrained Model 목록에 표시됨
+
 ---
 
 ## 기술 노트

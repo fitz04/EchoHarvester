@@ -92,11 +92,11 @@
                             <label class="block text-xs text-gray-500 mb-1">Model Type</label>
                             <div class="flex gap-4">
                                 <label class="flex items-center gap-1.5 text-sm">
-                                    <input type="radio" value="conformer_ctc" x-model="config.model.type" class="text-indigo-600">
+                                    <input type="radio" value="conformer_ctc" x-model="config.model.type" @change="onModelTypeChange()" class="text-indigo-600">
                                     Conformer CTC
                                 </label>
                                 <label class="flex items-center gap-1.5 text-sm">
-                                    <input type="radio" value="zipformer_ctc" x-model="config.model.type" class="text-indigo-600">
+                                    <input type="radio" value="zipformer_ctc" x-model="config.model.type" @change="onModelTypeChange()" class="text-indigo-600">
                                     Zipformer2 CTC
                                 </label>
                             </div>
@@ -127,16 +127,54 @@
                         </div>
 
                         <!-- Zipformer params -->
-                        <div x-show="config.model.type === 'zipformer_ctc'" class="space-y-2">
-                            <div>
-                                <label class="block text-xs text-gray-500 mb-1">Encoder Dim (per stack, comma-sep)</label>
-                                <input type="text" x-model="config.model.encoder_dim"
-                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                        <div x-show="config.model.type === 'zipformer_ctc'" x-data="{ showAdvanced: false }" class="space-y-2">
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">Encoder Dim (per stack)</label>
+                                    <input type="text" x-model="config.model.encoder_dim"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">Encoder Layers (per stack)</label>
+                                    <input type="text" x-model="config.model.num_encoder_layers"
+                                        class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                                </div>
                             </div>
                             <div>
-                                <label class="block text-xs text-gray-500 mb-1">Encoder Layers (per stack)</label>
-                                <input type="text" x-model="config.model.num_encoder_layers"
-                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                                <label class="block text-xs text-gray-500 mb-1">Dropout</label>
+                                <input type="number" x-model.number="config.model.dropout" step="0.01"
+                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" style="max-width: 120px;">
+                            </div>
+                            <div>
+                                <button type="button" @click="showAdvanced = !showAdvanced"
+                                    class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition">
+                                    <svg class="w-3 h-3 transition-transform" :class="showAdvanced ? 'rotate-90' : ''" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+                                    </svg>
+                                    Advanced
+                                </button>
+                                <div x-show="showAdvanced" x-cloak class="mt-2 space-y-2">
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Num Heads (per stack)</label>
+                                        <input type="text" x-model="config.model.num_heads"
+                                            class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Feedforward Dim (per stack)</label>
+                                        <input type="text" x-model="config.model.feedforward_dim"
+                                            class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">CNN Module Kernel (per stack)</label>
+                                        <input type="text" x-model="config.model.cnn_module_kernel"
+                                            class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-500 mb-1">Downsampling Factor (per stack)</label>
+                                        <input type="text" x-model="config.model.downsampling_factor"
+                                            class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -622,6 +660,28 @@ import WaveSurfer from 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js
 window.WaveSurfer = WaveSurfer;
 </script>
 <script>
+const MODEL_PRESETS = {
+    conformer_ctc: {
+        type: 'conformer_ctc',
+        attention_dim: 256,
+        num_encoder_layers: 12,
+        num_attention_heads: 4,
+        feedforward_dim: 2048,
+        depthwise_conv_kernel_size: 31,
+        dropout: 0.1,
+    },
+    zipformer_ctc: {
+        type: 'zipformer_ctc',
+        encoder_dim: '192,256,384,512,384,256',
+        num_encoder_layers: '2,2,3,4,3,2',
+        num_heads: '4,4,4,8,4,4',
+        feedforward_dim: '512,768,1024,1536,1024,768',
+        cnn_module_kernel: '31,31,15,15,15,31',
+        downsampling_factor: '1,2,4,8,4,2',
+        dropout: 0.1,
+    },
+};
+
 function trainingPage() {
     return {
         activeTab: 'setup',
@@ -630,7 +690,7 @@ function trainingPage() {
         // Config (from API)
         config: {
             shar_sources: [],
-            model: { type: 'conformer_ctc', attention_dim: 256, num_encoder_layers: 12, num_attention_heads: 4, dropout: 0.1, encoder_dim: '', num_encoder_layers_z: '' },
+            model: { ...MODEL_PRESETS.conformer_ctc },
             training_params: { num_epochs: 50, lr_factor: 2.5, warm_step: 5000, warmup_epochs: 0, clip_grad_norm: 5.0 },
             device: 'auto',
         },
@@ -724,11 +784,12 @@ function trainingPage() {
                 const resp = await fetch('/api/training/config');
                 const data = await resp.json();
                 if (data.configured) {
+                    const presetBase = MODEL_PRESETS[data.model?.type || 'conformer_ctc'];
                     this.config = {
                         ...this.config,
                         shar_sources: data.shar_sources || [],
                         device: data.device || 'auto',
-                        model: { ...this.config.model, ...data.model },
+                        model: { ...presetBase, ...data.model },
                         training_params: { ...this.config.training_params, ...data.training_params },
                     };
                 }
@@ -954,6 +1015,13 @@ function trainingPage() {
                 await fetch('/api/training/prepare', { method: 'POST' });
                 this.status.state = 'preparing';
             } catch (e) { console.error('Prepare failed:', e); }
+        },
+
+        onModelTypeChange() {
+            const preset = MODEL_PRESETS[this.config.model.type];
+            if (preset) {
+                this.config.model = { ...preset };
+            }
         },
 
         onPretrainedChange() {
