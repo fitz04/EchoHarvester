@@ -1107,20 +1107,25 @@ function trainingPage() {
                 this._drawLine(ctx, steps, (s) => ({ x: xScale(s.step), y: yScale(s.loss) }), '#3b82f6', 1.5);
             }
 
-            // Epoch val_loss markers (orange dots)
+            // Epoch val_loss markers (orange dots) + train_loss (green dots)
             for (const ep of epochs) {
-                if (ep.val_loss === null || ep.val_loss === undefined) continue;
-                // Find the closest step to this epoch boundary
-                // Use the last step of that epoch if available, otherwise estimate
-                let epStep = xMax;  // fallback
-                if (ep.total_steps) {
-                    epStep = ep.total_steps;
-                } else {
-                    // Find the step closest to this epoch end in the steps array
-                    // Epochs are 1-indexed; estimate step position proportionally
-                    const totalEpochs = this.status.total_epochs || epochs.length;
-                    epStep = Math.round((ep.epoch / totalEpochs) * xMax);
+                // Use global_step from epoch_complete event for accurate X position
+                const epStep = ep.global_step || Math.round((ep.epoch / (this.status.total_epochs || epochs.length)) * xMax);
+
+                // Train loss dot
+                if (ep.train_loss !== null && ep.train_loss !== undefined) {
+                    const tx = xScale(epStep);
+                    const ty = yScale(ep.train_loss);
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 3, 0, Math.PI * 2);
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
                 }
+
+                if (ep.val_loss === null || ep.val_loss === undefined) continue;
                 const cx = xScale(epStep);
                 const cy = yScale(ep.val_loss);
                 // Draw dot

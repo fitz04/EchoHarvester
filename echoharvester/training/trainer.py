@@ -257,6 +257,7 @@ class Trainer:
             self._emit({
                 "event": "epoch_complete",
                 "epoch": epoch,
+                "global_step": global_step,
                 "train_loss": round(train_loss, 4),
                 "val_loss": round(val_loss, 4) if val_loss != float("inf") else None,
                 "lr": lr,
@@ -302,6 +303,10 @@ class Trainer:
         params = self.config.training_params
 
         for batch in train_dl:
+            # Check for stop request within epoch (batch-level)
+            if self._stop_requested:
+                break
+
             features = batch["features"].to(self.device)
             feature_lens = batch["feature_lens"].to(self.device)
             targets = batch["targets"].to(self.device)
