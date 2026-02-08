@@ -185,6 +185,7 @@ class Config(BaseSettings):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    training: dict | None = None
 
     @field_validator("sources", mode="before")
     @classmethod
@@ -193,6 +194,16 @@ class Config(BaseSettings):
         if v is None:
             return []
         return v
+
+    def get_training_config(self):
+        """Parse and return TrainingConfig from the raw training dict."""
+        if self.training is None:
+            return None
+        from echoharvester.training.config import TrainingConfig
+
+        if isinstance(self.training, dict):
+            return TrainingConfig(**self.training)
+        return self.training
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Config":

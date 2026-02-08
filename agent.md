@@ -10,11 +10,14 @@
 4. **테스트 후 진행** - 각 단계 완료 후 동작 확인
 
 ## 환경 정보
-- **OS**: macOS (Apple Silicon)
-- **GPU**: CUDA 미지원 → `device: "auto"` 사용 (자동으로 CPU 폴백)
+- **OS**: WSL2 (Ubuntu 24.04) on Windows — 기존 macOS에서 이전
+- **GPU**: CUDA 지원 가능 (WSL2), `device: "auto"` 사용
 - **Python**: 3.13.5 (venv: `./venv/bin/python`)
 - **가상환경 활성화**: `source venv/bin/activate`
 - **faster-whisper**: CTranslate2 기반 → MPS 미지원, CPU(int8/float32)만 가능
+- **네트워크 드라이브**: `Z:` → `/mnt/z/` (drvfs, `\\DESKTOP-I7ITVII\easystore`)
+  - 마운트: `wsl.exe -u root -- mount -t drvfs Z: /mnt/z`
+  - Shar 데이터: `/mnt/z/data/shar_data/` (~110GB, 16 도메인)
 
 ---
 
@@ -294,6 +297,202 @@ tests/
   - 키보드 단축키 (Space/Tab/Enter/Ctrl+Enter), auto-advance, URL 딥링크
 - 이전 템플릿 5개 → `_archive/` 폴더로 이동
 
+### Phase 9: Training Web UI
+- [x] Training 모듈에 progress_callback + stop 메커니즘 추가
+- [x] Backend API 라우트 (12 엔드포인트)
+- [x] WebSocket `/ws/training` 엔드포인트
+- [x] Navigation + 앱 라우트 등록
+- [x] Training 페이지 3탭 (Setup, Monitor, Results)
+- [x] Canvas 기반 Loss/LR 차트
+- [x] Character-level diff 하이라이트
+- [x] WaveSurfer.js 디코드 샘플 오디오 재생
+- [x] 모델 Export (ONNX/TorchScript)
+
+### Phase 10: 네트워크 드라이브 + 테스트 Shar 데이터
+- [x] WSL2에서 네트워크 드라이브 마운트 (Z: → /mnt/z/)
+- [x] config.yaml에 테스트 shar_sources 3개 추가 (temp, radio, medical; ~412MB)
+- [x] .bak 파일 자동 무시 확인
+- [ ] Training Web UI에서 Prepare Data + Training 실행 검증
+
+### Phase 8: Icefall 한국어 ASR 훈련 모듈
+**시작일**: 2026-02-08
+**완료일**: 2026-02-08
+**상태**: 완료 (Phase 1~4 구현 + 검증)
+
+#### 개요
+EchoHarvester가 생성하는 Lhotse Shar 데이터를 활용하여 icefall 스타일 Conformer CTC 한국어 ASR 엔진을 훈련하는 기능 추가. icefall을 import하지 않고 standalone 구현 (의존성 최소화).
+
+#### 새 파일
+```
+echoharvester/training/
+├── __init__.py          # 모듈 exports
+├── config.py            # TrainingConfig (Pydantic: split, tokenizer, model, training_params)
+├── data_prep.py         # DataPreparer: Shar 로드→오디오 디스크 저장→media_id 기준 stratified split
+├── tokenizer.py         # CharTokenizer: 한글 음절 character-level tokens.txt (432 토큰)
+├── model.py             # ConformerCtcModel: Conv2dSubsampling→PE→ConformerEncoder×12→CTC
+├── dataset.py           # AsrDataset + create_dataloader (Lhotse SimpleCutSampler + on-the-fly Fbank)
+├── utils.py             # resolve_device, set_seed, NoamScheduler, compute_cer
+├── trainer.py           # Trainer: 에포크 루프, 체크포인트, 검증, TensorBoard
+├── decode.py            # Decoder: CTC greedy decode + CER 평가
+└── export.py            # ModelExporter: ONNX/TorchScript 내보내기
+```
+
+#### 수정된 기존 파일
+- `echoharvester/config.py`: `training: dict | None` 필드 + `get_training_config()` 메서드
+- `echoharvester/main.py`: `train` 서브커맨드 그룹 (prepare, run, status, decode, export)
+- `config.yaml`: `training:` 섹션 추가
+
+#### CLI 명령어
+```
+echoharvester train prepare     # 데이터 분할 + 토크나이저 생성
+echoharvester train run         # 모델 훈련 (--epochs, --resume 지원)
+echoharvester train status      # 훈련 상태 확인
+echoharvester train decode      # CTC greedy decode + CER 평가 (--checkpoint)
+echoharvester train export      # ONNX/TorchScript 내보내기 (--checkpoint, --format)
+```
+
+#### 검증 결과 (E2E 테스트, 120 cuts / 743초)
+- `train prepare`: 118 train / 1 val / 1 test, 432 토큰 (411 한글 음절 + 18 기타 + 3 특수)
+- `train run --epochs 2`: loss 21.54→15.95, val_loss 22.47→10.59, 32.9M params, ~3초/에포크 (CUDA)
+- `train run --epochs 4 --resume`: loss 8.01→6.13, val_loss 6.32→6.06 (정상 수렴)
+- `train decode`: CER=1.0 (2에포크에서는 미학습 상태, 정상 동작 확인)
+- `train export --format torchscript`: 135.9 MB 모델 정상 출력
+- 기존 249 tests 전체 PASS (regression 없음)
+
+#### 모델 아키텍처 (Conformer CTC, 32.9M params)
+```
+Fbank (batch, time, 80)
+  → Conv2dSubsampling (time//4, 256)
+  → PositionalEncoding
+  → ConformerEncoderLayer × 12 (Macaron-net: FF→MHSA→Conv→FF)
+  → Linear(256, 432) → log_softmax → CTC Loss
+```
+
+#### 핵심 구현 결정
+- Shar 데이터 로드 시 in-memory 오디오를 디스크에 WAV로 저장 (JSONL lazy loading 호환)
+- `SimpleCutSampler` 사용 (`DynamicBucketingSampler`는 소규모 데이터에서 drop_last 문제)
+- `shard_origin` PosixPath → str 변환, `dataloading_info` 제거 (Lhotse 직렬화 호환)
+- ONNX export는 `onnxscript` 패키지 필요 (optional dependency)
+- TorchScript export에서 `check_trace=False` (dropout으로 인한 graph 차이 무시)
+
+### Phase 8.5: Zipformer2 CTC 모델 추가
+**시작일**: 2026-02-08
+**완료일**: 2026-02-08
+**상태**: 완료
+
+#### 개요
+기존 Conformer CTC 모델에 더하여 icefall의 Zipformer2 아키텍처를 추가. icefall/k2를 pip 설치할 필요 없이 Apache 2.0 소스 3개를 vendor하여 독립 실행 가능.
+
+#### 변경 사항
+
+**새 파일 (vendored from k2-fsa/icefall)**
+```
+echoharvester/training/zipformer/
+├── __init__.py       # Zipformer2, Conv2dSubsampling exports
+├── scaling.py        # BiasNorm, SwooshR/L, ActivationBalancer, ScaledLinear 등
+├── subsampling.py    # Conv2dSubsampling (Zipformer용)
+├── zipformer.py      # Zipformer2 encoder
+└── LICENSE           # Apache 2.0 (k2-fsa/icefall)
+```
+
+**수정 파일**
+- `echoharvester/training/config.py`: `ModelConfig` → `ConformerModelConfig` + `ZipformerModelConfig` discriminated union
+- `echoharvester/training/model.py`: `ZipformerCtcModel` 래퍼 클래스 + `create_model()` 팩토리
+- `echoharvester/training/trainer.py`: `ConformerCtcModel(...)` → `create_model(...)` + d_model 분기
+- `echoharvester/training/decode.py`: `ConformerCtcModel(...)` → `create_model(...)`
+- `echoharvester/training/export.py`: `ConformerCtcModel(...)` → `create_model(...)`
+- `config.yaml`: Zipformer 설정 예시 주석 추가
+
+#### Vendor 수정 사항
+- `from scaling import ...` → `from echoharvester.training.zipformer.scaling import ...`
+- `from encoder_interface import EncoderInterface` → 제거 (nn.Module 직접 상속)
+- `from icefall.utils import torch_autocast` → 로컬 shim 함수
+- `import k2` → optional import (k2 없으면 pure-torch SwooshL/R fallback)
+- `torch.cuda.amp.custom_fwd/bwd` → `torch.amp.custom_fwd/bwd` (FutureWarning 수정)
+
+#### 검증 결과
+- Conformer CTC: 32.9M params, forward pass OK
+- Zipformer2 CTC: 63.6M params (default config), forward pass OK
+- Config discriminated union: YAML 파싱 OK
+- 기존 tests 전체 PASS (regression 없음)
+
+### Phase 9: Training Web UI
+**시작일**: 2026-02-08
+**완료일**: 2026-02-08
+**상태**: 완료
+
+#### 개요
+Training 모듈(Conformer CTC / Zipformer2 CTC)을 웹에서 제어할 수 있는 Training Web UI 구현.
+기존 WebUI 스택(FastAPI + Jinja2 + Alpine.js + Tailwind CSS + WebSocket) 그대로 사용.
+
+#### 변경 사항
+
+**새 파일**
+- `echoharvester/api/routes/training.py`: Training REST API (12 엔드포인트)
+  - GET /api/training/config, data-stats, checkpoints, status, decode-results
+  - POST /api/training/prepare, start, stop, decode, export
+  - GET /api/training/decode-results/audio/{idx}
+- `echoharvester/web/templates/training.html`: Training 페이지 (3탭 UI)
+
+**수정 파일**
+- `echoharvester/api/app.py`: `/training` HTML 라우트 + training 라우터 등록 + nav 폴백 추가
+- `echoharvester/api/routes/__init__.py`: `training` import 추가
+- `echoharvester/api/routes/websocket.py`: `training_manager` + `/ws/training` 엔드포인트 추가
+- `echoharvester/web/templates/base.html`: nav에 "Training" 링크 + `nav_training` block
+- `echoharvester/training/trainer.py`: `progress_callback`, `_stop_requested`, `_emit()`, stop 체크
+- `echoharvester/training/data_prep.py`: `progress_callback` + 단계별 이벤트 발행
+- `echoharvester/training/decode.py`: `progress_callback`, `max_samples` 파라미터, 진행 이벤트
+- `echoharvester/training/export.py`: `progress_callback` + start/complete 이벤트
+
+#### 3탭 구성
+1. **Setup**: 데이터 준비 + 모델 설정 + 체크포인트 목록 + Start Training
+2. **Monitor**: 실시간 loss curve (Canvas), 진행률 바, 로그 패널, Stop 버튼, WebSocket
+3. **Results**: 디코딩 컨트롤, CER 분포, 오류 샘플 master-detail, WaveSurfer 오디오, char-level diff, Export
+
+#### WebSocket 이벤트 체계
+- Thread→Async 브릿지: `asyncio.run_coroutine_threadsafe()` 사용
+- 이벤트: prepare_*, train_start/epoch_start/batch_update/epoch_complete/train_complete/train_stopped, decode_*, export_*
+- 연결 시 현재 상태 전송 (브라우저 새로고침 대응)
+
+#### 검증
+- 기존 249 tests 전체 PASS (regression 없음)
+- 모든 import 체인 정상
+- Training 모듈 callback=None 시 기존 CLI 동작 그대로 유지
+- 앱 생성 + 라우트 등록 정상 (총 44 routes)
+
+### Phase 10: 네트워크 드라이브 마운트 + 테스트 Shar 데이터
+**시작일**: 2026-02-08
+**완료일**: 2026-02-08
+**상태**: 완료
+
+#### 개요
+WSL2에서 네트워크 드라이브 `\\DESKTOP-I7ITVII\easystore`를 마운트하여 대규모 한국어 ASR Shar 데이터(~110GB, 16 도메인)에 접근. 테스트용으로 소형 3개 디렉토리 선택.
+
+#### 마운트 설정
+- Windows에서 `net use Z: \\DESKTOP-I7ITVII\easystore /persistent:yes`
+- WSL2에서 `wsl.exe -u root -- mount -t drvfs Z: /mnt/z`
+- 경로: `/mnt/z/data/shar_data/`
+
+#### 테스트 Shar 소스 (config.yaml)
+
+| 디렉토리 | Shards | 크기 | .bak 파일 |
+|----------|--------|------|-----------|
+| `/mnt/z/data/shar_data/temp` | 5 | 79MB | 4 (무시됨) |
+| `/mnt/z/data/shar_data/radio` | 9 | 159MB | 9 (무시됨) |
+| `/mnt/z/data/shar_data/medical` | 4 | 174MB | 4 (무시됨) |
+| **합계** | **18** | **~412MB** | **17** |
+
+#### .bak 파일 처리
+- `Path.glob("cuts.*.jsonl.gz")`는 `.bak`을 매칭하지 않지만 (Python pathlib)
+- **Lhotse `CutSet.from_shar(in_dir=...)`는 `extension_contains(".jsonl")`를 사용하여 `.bak` 파일도 매칭** → 버그 발생
+- **수정**: `data_prep.py`의 `_load_shar_sources()`에서 `in_dir` 대신 `fields` 파라미터로 명시적 파일 목록 전달, `.bak` 파일 제외
+- 결과: temp 4,660 cuts (5.5h), radio 8,677 cuts (11.2h), medical 3,937 cuts (14.0h) → **총 17,274 cuts (30.7h)**
+
+#### 다음 단계
+- Training Web UI에서 Prepare Data → Start Training 실행
+- Monitor 탭에서 loss 수렴 확인
+- 향후 필요 시 대규모 데이터 랜덤 샘플링 유틸리티 구현
+
 ---
 
 ## 기술 노트
@@ -312,6 +511,12 @@ tests/
 - `config.yaml`: 파이프라인 설정 (소스, 필터링, GPU 등)
 - `pyproject.toml`: 패키지 의존성
 - `echoharvester/config.py`: Pydantic 설정 모델
+
+### WSL2 네트워크 드라이브 마운트
+- Windows에서 `net use Z: \\DESKTOP-I7ITVII\easystore /persistent:yes`
+- WSL2 부팅 후 매번 마운트 필요: `wsl.exe -u root -- bash -c "mkdir -p /mnt/z && mount -t drvfs Z: /mnt/z"`
+- WSL2는 9p 프로토콜 사용, drvfs 마운트된 네트워크 드라이브는 읽기 성능이 로컬보다 느림
+- `/etc/fstab` 영구 마운트 가능: `Z: /mnt/z drvfs defaults 0 0`
 
 ### 파이프라인 상태 관리
 - SQLite DB에 모든 상태 저장 → 중단 후 재개 가능

@@ -205,3 +205,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# EchoHarvester runtime data
+echoharvester.db
+echoharvester.db-shm
+echoharvester.db-wal
+work/
+output/
+exp/
+training_data/
+logs/

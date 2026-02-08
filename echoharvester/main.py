@@ -161,6 +161,151 @@ def run_server(args):
     )
 
 
+def train_prepare(args):
+    """Prepare training data: load shar, split, build tokenizer."""
+    from echoharvester.config import load_config
+
+    config = load_config(args.config)
+    tc = config.get_training_config()
+    if tc is None:
+        print("Error: 'training' section not found in config.yaml")
+        sys.exit(1)
+
+    from echoharvester.training.data_prep import DataPreparer
+    from echoharvester.training.tokenizer import build_tokenizer
+
+    # Step 1: Data preparation (load, merge, split)
+    preparer = DataPreparer(tc)
+    stats = preparer.prepare()
+    print(f"\nData preparation complete:")
+    print(json.dumps(stats, indent=2, ensure_ascii=False))
+
+    # Step 2: Build tokenizer
+    tokenizer = build_tokenizer(tc)
+    print(f"\nTokenizer built: {tokenizer.vocab_size} tokens")
+
+
+def train_run(args):
+    """Run model training."""
+    from echoharvester.config import load_config
+
+    config = load_config(args.config)
+    tc = config.get_training_config()
+    if tc is None:
+        print("Error: 'training' section not found in config.yaml")
+        sys.exit(1)
+
+    # Override epochs if specified
+    if args.epochs:
+        tc.training_params.num_epochs = args.epochs
+
+    from echoharvester.training.trainer import Trainer
+
+    trainer = Trainer(tc)
+    stats = trainer.train(resume_checkpoint=args.resume)
+    print(f"\nTraining complete:")
+    print(f"  Best val_loss: {stats['best_val_loss']} (epoch {stats['best_epoch']})")
+
+
+def train_status(args):
+    """Show training status."""
+    from echoharvester.config import load_config
+
+    config = load_config(args.config)
+    tc = config.get_training_config()
+    if tc is None:
+        print("Error: 'training' section not found in config.yaml")
+        sys.exit(1)
+
+    exp_dir = Path(tc.exp_dir)
+
+    # Check for training stats
+    stats_path = exp_dir / "training_stats.json"
+    if stats_path.exists():
+        with open(stats_path, encoding="utf-8") as f:
+            stats = json.load(f)
+        print("\n=== Training Status ===")
+        print(f"Best val_loss: {stats.get('best_val_loss', 'N/A')}")
+        print(f"Best epoch: {stats.get('best_epoch', 'N/A')}")
+        epochs = stats.get("epochs", [])
+        if epochs:
+            last = epochs[-1]
+            print(f"Last epoch: {last['epoch']}")
+            print(f"  train_loss: {last['train_loss']}")
+            print(f"  val_loss: {last.get('val_loss', 'N/A')}")
+    else:
+        print("No training stats found. Run 'train run' first.")
+
+    # List checkpoints
+    checkpoints = sorted(exp_dir.glob("epoch-*.pt"))
+    if checkpoints:
+        print(f"\nCheckpoints ({len(checkpoints)}):")
+        for ckpt in checkpoints:
+            size_mb = ckpt.stat().st_size / (1024 * 1024)
+            print(f"  {ckpt.name} ({size_mb:.1f} MB)")
+        if (exp_dir / "best.pt").exists():
+            print("  best.pt (symlink)")
+    else:
+        print("\nNo checkpoints found.")
+
+    # Check data preparation
+    data_dir = Path(tc.data_dir)
+    for split in ["train", "val", "test"]:
+        path = data_dir / f"{split}_cuts.jsonl.gz"
+        if path.exists():
+            size_mb = path.stat().st_size / (1024 * 1024)
+            print(f"\n  {split}: {path} ({size_mb:.1f} MB)")
+
+    tokens_path = data_dir / "lang_char" / "tokens.txt"
+    if tokens_path.exists():
+        num_tokens = sum(1 for _ in open(tokens_path, encoding="utf-8"))
+        print(f"  Tokenizer: {num_tokens} tokens")
+
+
+def train_decode(args):
+    """Decode test set and compute CER."""
+    from echoharvester.config import load_config
+
+    config = load_config(args.config)
+    tc = config.get_training_config()
+    if tc is None:
+        print("Error: 'training' section not found in config.yaml")
+        sys.exit(1)
+
+    from echoharvester.training.decode import Decoder
+
+    decoder = Decoder(tc)
+    results = decoder.decode(
+        checkpoint_path=args.checkpoint,
+        split=args.split,
+    )
+    print(f"\nDecode results:")
+    print(f"  Split: {results['split']}")
+    print(f"  Utterances: {results['num_utterances']}")
+    print(f"  CER: {results['overall_cer']:.4f}")
+
+
+def train_export(args):
+    """Export model to ONNX or TorchScript."""
+    from echoharvester.config import load_config
+
+    config = load_config(args.config)
+    tc = config.get_training_config()
+    if tc is None:
+        print("Error: 'training' section not found in config.yaml")
+        sys.exit(1)
+
+    from echoharvester.training.export import ModelExporter
+
+    exporter = ModelExporter(tc)
+    output = exporter.export(
+        checkpoint_path=args.checkpoint,
+        output_path=args.output,
+        format=args.format,
+    )
+    print(f"\nModel exported to: {output}")
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -214,6 +359,75 @@ def main():
         help="Port to bind to",
     )
 
+    # Train command group
+    train_parser = subparsers.add_parser("train", help="Training commands")
+    train_subparsers = train_parser.add_subparsers(
+        dest="train_command", help="Training sub-commands"
+    )
+
+    # train prepare
+    train_subparsers.add_parser("prepare", help="Prepare training data (split + tokenizer)")
+
+    # train run
+    train_run_parser = train_subparsers.add_parser("run", help="Run model training")
+    train_run_parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to checkpoint to resume from",
+    )
+    train_run_parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Override number of epochs",
+    )
+
+    # train status
+    train_subparsers.add_parser("status", help="Show training status")
+
+    # train decode
+    train_decode_parser = train_subparsers.add_parser(
+        "decode", help="Decode test set and compute CER"
+    )
+    train_decode_parser.add_argument(
+        "--checkpoint",
+        type=str,
+        required=True,
+        help="Path to model checkpoint",
+    )
+    train_decode_parser.add_argument(
+        "--split",
+        type=str,
+        default="test",
+        choices=["test", "val"],
+        help="Data split to decode",
+    )
+
+    # train export
+    train_export_parser = train_subparsers.add_parser(
+        "export", help="Export model to ONNX/TorchScript"
+    )
+    train_export_parser.add_argument(
+        "--checkpoint",
+        type=str,
+        required=True,
+        help="Path to model checkpoint",
+    )
+    train_export_parser.add_argument(
+        "--format",
+        type=str,
+        default="onnx",
+        choices=["onnx", "torchscript"],
+        help="Export format",
+    )
+    train_export_parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output file path",
+    )
+
     args = parser.parse_args()
 
     # Setup logging
@@ -231,6 +445,19 @@ def main():
         asyncio.run(generate_report(args))
     elif args.command == "server":
         run_server(args)
+    elif args.command == "train":
+        if args.train_command == "prepare":
+            train_prepare(args)
+        elif args.train_command == "run":
+            train_run(args)
+        elif args.train_command == "status":
+            train_status(args)
+        elif args.train_command == "decode":
+            train_decode(args)
+        elif args.train_command == "export":
+            train_export(args)
+        else:
+            train_parser.print_help()
     else:
         parser.print_help()
 

@@ -21,13 +21,13 @@ class ConnectionManager:
         """Accept a new connection."""
         await websocket.accept()
         self.active_connections.append(websocket)
-        logger.info(f"WebSocket connected. Total: {len(self.active_connections)}")
+        logger.debug(f"WebSocket connected. Total: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         """Remove a connection."""
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-        logger.info(f"WebSocket disconnected. Total: {len(self.active_connections)}")
+            logger.debug(f"WebSocket disconnected. Total: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict[str, Any]):
         """Broadcast message to all connections."""
@@ -55,8 +55,10 @@ class ConnectionManager:
             self.disconnect(websocket)
 
 
-# Global connection manager
+# Global connection managers
 manager = ConnectionManager()
+logs_manager = ConnectionManager()
+training_manager = ConnectionManager()
 
 
 def get_progress_callback():
@@ -117,7 +119,7 @@ async def websocket_progress(websocket: WebSocket):
 @router.websocket("/logs")
 async def websocket_logs(websocket: WebSocket):
     """WebSocket endpoint for log streaming."""
-    await manager.connect(websocket)
+    await logs_manager.connect(websocket)
 
     # Queue for buffered log delivery
     log_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
@@ -125,6 +127,9 @@ async def websocket_logs(websocket: WebSocket):
     # Create a custom log handler that enqueues instead of direct send
     class WebSocketHandler(logging.Handler):
         def emit(self, record):
+            # Skip websocket module's own logs to prevent feedback loop
+            if record.name.startswith("echoharvester.api.routes.websocket"):
+                return
             try:
                 log_entry = {
                     "event": "log",
@@ -145,13 +150,13 @@ async def websocket_logs(websocket: WebSocket):
         try:
             while True:
                 entry = await log_queue.get()
-                await manager.send_personal(websocket, entry)
+                await logs_manager.send_personal(websocket, entry)
         except asyncio.CancelledError:
             # Drain remaining items before exit
             while not log_queue.empty():
                 try:
                     entry = log_queue.get_nowait()
-                    await manager.send_personal(websocket, entry)
+                    await logs_manager.send_personal(websocket, entry)
                 except (asyncio.QueueEmpty, Exception):
                     break
         except Exception:
@@ -169,7 +174,7 @@ async def websocket_logs(websocket: WebSocket):
     consumer_task = asyncio.create_task(log_consumer())
 
     try:
-        await manager.send_personal(websocket, {
+        await logs_manager.send_personal(websocket, {
             "event": "connected",
             "message": "Log streaming started",
         })
@@ -181,7 +186,7 @@ async def websocket_logs(websocket: WebSocket):
                     timeout=30.0,
                 )
             except asyncio.TimeoutError:
-                await manager.send_personal(websocket, {"type": "ping"})
+                await logs_manager.send_personal(websocket, {"type": "ping"})
 
     except WebSocketDisconnect:
         pass
@@ -192,4 +197,57 @@ async def websocket_logs(websocket: WebSocket):
         except asyncio.CancelledError:
             pass
         root_logger.removeHandler(handler)
-        manager.disconnect(websocket)
+        logs_manager.disconnect(websocket)
+
+
+@router.websocket("/training")
+async def websocket_training(websocket: WebSocket):
+    """WebSocket endpoint for training progress updates."""
+    await training_manager.connect(websocket)
+
+    try:
+        # Send current training status on connect
+        if hasattr(websocket.app.state, "training_state"):
+            ts = websocket.app.state.training_state
+            await training_manager.send_personal(websocket, {
+                "event": "connected",
+                "status": {
+                    "state": ts.state,
+                    "current_epoch": ts.current_epoch,
+                    "total_epochs": ts.total_epochs,
+                    "train_loss": ts.train_loss,
+                    "val_loss": ts.val_loss,
+                    "lr": ts.lr,
+                    "best_val_loss": ts.best_val_loss if ts.best_val_loss != float("inf") else None,
+                    "best_epoch": ts.best_epoch,
+                    "error": ts.error,
+                    "epochs": ts.epochs,
+                },
+            })
+        else:
+            await training_manager.send_personal(websocket, {
+                "event": "connected",
+                "status": {"state": "idle"},
+            })
+
+        # Keep connection alive
+        while True:
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30.0,
+                )
+                try:
+                    message = json.loads(data)
+                    if message.get("type") == "ping":
+                        await training_manager.send_personal(websocket, {"type": "pong"})
+                except json.JSONDecodeError:
+                    pass
+            except asyncio.TimeoutError:
+                await training_manager.send_personal(websocket, {"type": "ping"})
+
+    except WebSocketDisconnect:
+        training_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"Training WebSocket error: {e}")
+        training_manager.disconnect(websocket)

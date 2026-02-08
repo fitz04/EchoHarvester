@@ -1,0 +1,1210 @@
+{% extends "base.html" %}
+
+{% block title %}Training - EchoHarvester{% endblock %}
+{% block nav_training %}bg-indigo-700{% endblock %}
+
+{% block head %}
+<style>
+    [x-cloak] { display: none !important; }
+    .tab-btn { transition: all 0.15s; }
+    .tab-btn.active { border-bottom: 2px solid #4f46e5; color: #4f46e5; font-weight: 600; }
+    .log-panel { font-family: 'Menlo', 'Consolas', monospace; font-size: 0.75rem; line-height: 1.4; }
+    .log-panel::-webkit-scrollbar { width: 6px; }
+    .log-panel::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 3px; }
+    .diff-ins { background-color: #bbf7d0; color: #166534; }
+    .diff-del { background-color: #fecaca; color: #991b1b; text-decoration: line-through; }
+    .diff-sub { background-color: #fef08a; color: #854d0e; }
+    .sample-row { transition: background-color 0.15s; cursor: pointer; }
+    .sample-row:hover { background-color: #f9fafb; }
+    .sample-row.active { background-color: #eef2ff; border-left: 3px solid #6366f1; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="trainingPage()" x-init="init()">
+
+    <!-- Tab Navigation -->
+    <div class="bg-white rounded-t-lg shadow px-4 flex gap-6 border-b border-gray-200">
+        <button @click="activeTab = 'setup'" class="tab-btn py-3 text-sm"
+            :class="activeTab === 'setup' ? 'active' : 'text-gray-500 hover:text-gray-700'">Setup</button>
+        <button @click="activeTab = 'monitor'" class="tab-btn py-3 text-sm"
+            :class="activeTab === 'monitor' ? 'active' : 'text-gray-500 hover:text-gray-700'">Monitor</button>
+        <button @click="activeTab = 'results'" class="tab-btn py-3 text-sm"
+            :class="activeTab === 'results' ? 'active' : 'text-gray-500 hover:text-gray-700'">Results</button>
+
+        <!-- Status indicator -->
+        <div class="ml-auto flex items-center gap-2 py-3">
+            <span class="w-2 h-2 rounded-full"
+                :class="{
+                    'bg-gray-400': status.state === 'idle',
+                    'bg-yellow-400 animate-pulse': status.state === 'preparing',
+                    'bg-green-500 animate-pulse': status.state === 'training',
+                    'bg-blue-500 animate-pulse': status.state === 'decoding' || status.state === 'exporting',
+                    'bg-red-500': status.error
+                }"></span>
+            <span class="text-xs text-gray-500 capitalize" x-text="status.state + (status.error ? ' (error)' : '')"></span>
+        </div>
+    </div>
+
+    <!-- ==================== SETUP TAB ==================== -->
+    <div x-show="activeTab === 'setup'" x-cloak class="bg-white rounded-b-lg shadow">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6">
+            <!-- Left Column: Configuration -->
+            <div class="space-y-6">
+                <!-- Data Sources -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Data Sources</h3>
+                    <div class="bg-gray-50 rounded-lg p-3 text-sm">
+                        <template x-if="config.shar_sources && config.shar_sources.length">
+                            <ul class="space-y-1">
+                                <template x-for="src in config.shar_sources" :key="src">
+                                    <li class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                        </svg>
+                                        <span class="font-mono text-gray-600" x-text="src"></span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </template>
+                        <template x-if="!config.shar_sources || !config.shar_sources.length">
+                            <p class="text-gray-400">No shar sources configured</p>
+                        </template>
+                    </div>
+                    <button @click="prepareData()" :disabled="status.state !== 'idle'"
+                        class="mt-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span x-show="status.state !== 'preparing'">Prepare Data</span>
+                        <span x-show="status.state === 'preparing'" class="flex items-center gap-2">
+                            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                            </svg>
+                            Preparing...
+                        </span>
+                    </button>
+                </div>
+
+                <!-- Model Configuration -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Model Configuration</h3>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Model Type</label>
+                            <div class="flex gap-4">
+                                <label class="flex items-center gap-1.5 text-sm">
+                                    <input type="radio" value="conformer_ctc" x-model="config.model.type" class="text-indigo-600">
+                                    Conformer CTC
+                                </label>
+                                <label class="flex items-center gap-1.5 text-sm">
+                                    <input type="radio" value="zipformer_ctc" x-model="config.model.type" class="text-indigo-600">
+                                    Zipformer2 CTC
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Conformer params -->
+                        <div x-show="config.model.type === 'conformer_ctc'" class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">Attention Dim</label>
+                                <input type="number" x-model.number="config.model.attention_dim"
+                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">Encoder Layers</label>
+                                <input type="number" x-model.number="config.model.num_encoder_layers"
+                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">Attention Heads</label>
+                                <input type="number" x-model.number="config.model.num_attention_heads"
+                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">Dropout</label>
+                                <input type="number" x-model.number="config.model.dropout" step="0.01"
+                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            </div>
+                        </div>
+
+                        <!-- Zipformer params -->
+                        <div x-show="config.model.type === 'zipformer_ctc'" class="space-y-2">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">Encoder Dim (per stack, comma-sep)</label>
+                                <input type="text" x-model="config.model.encoder_dim"
+                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">Encoder Layers (per stack)</label>
+                                <input type="text" x-model="config.model.num_encoder_layers"
+                                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Training Parameters -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Training Parameters</h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Epochs</label>
+                            <input type="number" x-model.number="config.training_params.num_epochs"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">LR Factor</label>
+                            <input type="number" x-model.number="config.training_params.lr_factor" step="0.1"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Warmup Steps</label>
+                            <input type="number" x-model.number="config.training_params.warm_step"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Grad Clip Norm</label>
+                            <input type="number" x-model.number="config.training_params.clip_grad_norm" step="0.1"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Device + Resume -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Device</label>
+                        <select x-model="config.device"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            <option value="auto">Auto</option>
+                            <option value="cpu">CPU</option>
+                            <option value="cuda">CUDA</option>
+                            <option value="mps">MPS</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Resume From</label>
+                        <select x-model="resumeCheckpoint"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                            <option value="">None (fresh start)</option>
+                            <template x-for="ckpt in checkpoints" :key="ckpt.path">
+                                <option :value="ckpt.path" x-text="ckpt.name + ' (' + ckpt.size_mb + ' MB)' + (ckpt.is_best ? ' *' : '')"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Status -->
+            <div class="space-y-6">
+                <!-- Data Status -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Data Status</h3>
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <template x-if="!dataStats.prepared">
+                            <div class="text-center text-gray-400 py-4">
+                                <svg class="w-10 h-10 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
+                                </svg>
+                                <p class="text-sm">Data not prepared yet</p>
+                                <p class="text-xs mt-1">Click "Prepare Data" to start</p>
+                            </div>
+                        </template>
+                        <template x-if="dataStats.prepared">
+                            <div class="space-y-3">
+                                <div class="flex items-center gap-2 text-sm text-green-600 font-medium">
+                                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                    </svg>
+                                    Data Ready
+                                </div>
+                                <template x-for="split in ['train', 'val', 'test']" :key="split">
+                                    <div class="flex justify-between text-sm" x-show="dataStats.splits && dataStats.splits[split]">
+                                        <span class="text-gray-600 capitalize" x-text="split"></span>
+                                        <span class="text-gray-800 font-medium"
+                                            x-text="(dataStats.splits[split]?.num_cuts || 0) + ' cuts, ' + (dataStats.splits[split]?.total_duration_hours || 0).toFixed(2) + 'h'"></span>
+                                    </div>
+                                </template>
+                                <div class="text-xs text-gray-400 pt-1 border-t border-gray-200"
+                                    x-text="'Total: ' + (dataStats.total_cuts || 0) + ' cuts'"></div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Checkpoints -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Checkpoints</h3>
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <template x-if="checkpoints.length === 0">
+                            <p class="text-sm text-gray-400 text-center py-2">No checkpoints yet</p>
+                        </template>
+                        <template x-if="checkpoints.length > 0">
+                            <ul class="space-y-1 text-sm max-h-40 overflow-y-auto">
+                                <template x-for="ckpt in checkpoints" :key="ckpt.path">
+                                    <li class="flex justify-between items-center py-1">
+                                        <span class="font-mono text-gray-600" x-text="ckpt.name"></span>
+                                        <span class="flex items-center gap-2">
+                                            <span class="text-xs text-gray-400" x-text="ckpt.size_mb + ' MB'"></span>
+                                            <span x-show="ckpt.is_best" class="text-yellow-500 text-xs font-bold">BEST</span>
+                                        </span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Previous Training Summary -->
+                <div x-show="status.best_val_loss !== null">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-2">Previous Training</h3>
+                    <div class="bg-gray-50 rounded-lg p-3 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Best Val Loss</span>
+                            <span class="font-medium text-gray-800" x-text="status.best_val_loss?.toFixed(4) || '-'"></span>
+                        </div>
+                        <div class="flex justify-between mt-1">
+                            <span class="text-gray-600">Best Epoch</span>
+                            <span class="font-medium text-gray-800" x-text="status.best_epoch || '-'"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error -->
+                <div x-show="status.error" class="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p class="text-sm text-red-700" x-text="status.error"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Start Training Button -->
+        <div class="border-t border-gray-200 px-6 py-4">
+            <button @click="startTraining()" :disabled="status.state !== 'idle' || !dataStats.prepared"
+                class="w-full py-3 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
+                </svg>
+                Start Training
+            </button>
+        </div>
+    </div>
+
+    <!-- ==================== MONITOR TAB ==================== -->
+    <div x-show="activeTab === 'monitor'" x-cloak class="space-y-4">
+        <!-- Progress Header -->
+        <div class="bg-white rounded-lg shadow p-4">
+            <template x-if="status.state === 'training'">
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-3">
+                            <span class="text-sm font-semibold text-gray-700"
+                                x-text="'Epoch ' + status.current_epoch + '/' + status.total_epochs"></span>
+                            <span class="text-xs text-gray-500"
+                                x-text="'train_loss: ' + (status.train_loss || 0).toFixed(4) + '  val_loss: ' + (status.val_loss || 0).toFixed(4) + '  lr: ' + (status.lr || 0).toExponential(1)"></span>
+                        </div>
+                        <button @click="stopTraining()"
+                            class="px-4 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition flex items-center gap-1.5">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M5.25 3A2.25 2.25 0 003 5.25v9.5A2.25 2.25 0 005.25 17h9.5A2.25 2.25 0 0017 14.75v-9.5A2.25 2.25 0 0014.75 3h-9.5z"/>
+                            </svg>
+                            Stop
+                        </button>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-green-500 h-2 rounded-full transition-all duration-300"
+                            :style="'width: ' + (status.total_epochs > 0 ? (status.current_epoch / status.total_epochs * 100) : 0) + '%'"></div>
+                    </div>
+                    <div class="flex justify-between mt-1 text-xs text-gray-400">
+                        <span x-text="Math.round(status.total_epochs > 0 ? (status.current_epoch / status.total_epochs * 100) : 0) + '%'"></span>
+                        <span x-text="monitorElapsed"></span>
+                    </div>
+                </div>
+            </template>
+            <template x-if="status.state !== 'training'">
+                <div class="text-center py-4 text-gray-400">
+                    <template x-if="status.epochs && status.epochs.length > 0">
+                        <div>
+                            <p class="text-sm text-gray-600 font-medium mb-2">Last Training Summary</p>
+                            <div class="flex justify-center gap-8 text-sm">
+                                <div>
+                                    <span class="text-gray-400">Epochs:</span>
+                                    <span class="text-gray-700 font-medium" x-text="status.epochs.length"></span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">Best Loss:</span>
+                                    <span class="text-gray-700 font-medium" x-text="status.best_val_loss?.toFixed(4) || '-'"></span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">Best Epoch:</span>
+                                    <span class="text-gray-700 font-medium" x-text="status.best_epoch || '-'"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                    <template x-if="!status.epochs || status.epochs.length === 0">
+                        <div>
+                            <p class="text-sm">No training in progress</p>
+                            <p class="text-xs mt-1">Go to Setup tab to start training</p>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
+
+        <!-- Loss Curve -->
+        <div class="bg-white rounded-lg shadow p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Loss Curve</h3>
+            <canvas id="lossCanvas" width="800" height="250" class="w-full" style="max-height: 250px;"></canvas>
+        </div>
+
+        <!-- LR Curve -->
+        <div class="bg-white rounded-lg shadow p-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Learning Rate</h3>
+            <canvas id="lrCanvas" width="800" height="120" class="w-full" style="max-height: 120px;"></canvas>
+        </div>
+
+        <!-- Log Panel -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-4 py-2 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-gray-700">Logs</h3>
+                <div class="flex items-center gap-3">
+                    <label class="flex items-center gap-1 text-xs text-gray-500">
+                        <input type="checkbox" x-model="logAutoScroll" class="rounded">
+                        Auto-scroll
+                    </label>
+                    <button @click="logLines = []" class="text-xs text-gray-400 hover:text-gray-600">Clear</button>
+                </div>
+            </div>
+            <div x-ref="logPanel" class="log-panel bg-gray-900 text-gray-300 p-3 h-48 overflow-y-auto rounded-b-lg">
+                <template x-for="(line, i) in logLines" :key="i">
+                    <div class="whitespace-pre-wrap" x-text="line"></div>
+                </template>
+                <div x-show="logLines.length === 0" class="text-gray-600 text-center py-8">
+                    Logs will appear here during training...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== RESULTS TAB ==================== -->
+    <div x-show="activeTab === 'results'" x-cloak class="space-y-4">
+        <!-- Decode Controls -->
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="flex flex-wrap items-end gap-3">
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Checkpoint</label>
+                    <select x-model="decodeCheckpoint" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                        <template x-for="ckpt in checkpoints" :key="ckpt.path">
+                            <option :value="ckpt.path" x-text="ckpt.name + (ckpt.is_best ? ' *' : '')"></option>
+                        </template>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Split</label>
+                    <select x-model="decodeSplit" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                        <option value="test">test</option>
+                        <option value="val">val</option>
+                    </select>
+                </div>
+                <button @click="runDecode()" :disabled="status.state !== 'idle' || !decodeCheckpoint"
+                    class="px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span x-show="status.state !== 'decoding'">Decode</span>
+                    <span x-show="status.state === 'decoding'" class="flex items-center gap-1">
+                        <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                        </svg>
+                        Decoding...
+                    </span>
+                </button>
+                <button @click="loadDecodeResults()" class="px-4 py-1.5 border border-gray-300 text-gray-600 text-sm rounded-lg hover:bg-gray-50 transition">
+                    Load Results
+                </button>
+            </div>
+        </div>
+
+        <!-- Results Overview -->
+        <template x-if="decodeResults.available">
+            <div>
+                <!-- Summary -->
+                <div class="bg-white rounded-lg shadow p-4 mb-4">
+                    <div class="flex flex-wrap gap-6 text-sm">
+                        <div>
+                            <span class="text-gray-400">Overall CER:</span>
+                            <span class="font-bold text-lg ml-1"
+                                :class="decodeResults.overall_cer < 0.15 ? 'text-green-600' : decodeResults.overall_cer < 0.3 ? 'text-yellow-600' : 'text-red-600'"
+                                x-text="((decodeResults.overall_cer || 0) * 100).toFixed(1) + '%'"></span>
+                        </div>
+                        <div>
+                            <span class="text-gray-400">Utterances:</span>
+                            <span class="font-semibold text-gray-700 ml-1" x-text="decodeResults.num_utterances || 0"></span>
+                        </div>
+                        <div>
+                            <span class="text-gray-400">Checkpoint:</span>
+                            <span class="font-mono text-gray-600 text-xs ml-1" x-text="decodeResults.checkpoint || '-'"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CER Distribution -->
+                <div class="bg-white rounded-lg shadow p-4 mb-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">CER Distribution</h3>
+                    <div class="space-y-1.5">
+                        <template x-for="bin in cerBins" :key="bin.label">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-500 w-14 text-right" x-text="bin.label"></span>
+                                <div class="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
+                                    <div class="h-5 rounded-full transition-all duration-300"
+                                        :class="bin.color"
+                                        :style="'width: ' + (maxBinCount > 0 ? (bin.count / maxBinCount * 100) : 0) + '%'">
+                                    </div>
+                                </div>
+                                <span class="text-xs text-gray-600 w-8" x-text="bin.count"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Samples Master-Detail -->
+                <div class="flex gap-4" style="height: calc(100vh - 32rem);">
+                    <!-- Sample List -->
+                    <div class="w-2/5 flex-shrink-0 bg-white rounded-lg shadow flex flex-col overflow-hidden">
+                        <div class="px-4 py-3 border-b border-gray-200 bg-gray-50">
+                            <span class="text-sm font-medium text-gray-700">Samples (CER descending)</span>
+                        </div>
+                        <div class="flex-1 overflow-y-auto">
+                            <template x-for="(sample, idx) in sortedSamples" :key="idx">
+                                <div @click="selectSample(idx)"
+                                    class="sample-row px-4 py-2.5 border-b border-gray-100"
+                                    :class="{ 'active': selectedSampleIdx === idx }">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-sm text-gray-700 truncate" x-text="(sample.ref || '-').substring(0, 40)"></span>
+                                        <span class="text-xs px-1.5 py-0.5 rounded ml-2 flex-shrink-0"
+                                            :class="{
+                                                'bg-green-100 text-green-700': sample.cer < 0.1,
+                                                'bg-yellow-100 text-yellow-700': sample.cer >= 0.1 && sample.cer < 0.3,
+                                                'bg-red-100 text-red-700': sample.cer >= 0.3
+                                            }"
+                                            x-text="(sample.cer * 100).toFixed(0) + '%'"></span>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="!decodeResults.samples || decodeResults.samples.length === 0"
+                                class="px-4 py-12 text-center text-gray-400 text-sm">
+                                No decoded samples
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sample Detail -->
+                    <div class="flex-1 min-w-0 flex flex-col gap-4 overflow-y-auto">
+                        <template x-if="selectedSample">
+                            <div class="space-y-4">
+                                <!-- Audio Player -->
+                                <div class="bg-white rounded-lg shadow p-4">
+                                    <div id="decodeWaveform" class="w-full h-24 bg-gray-50 rounded"></div>
+                                    <div class="flex items-center gap-3 mt-2">
+                                        <button @click="toggleDecodePlay()" class="text-indigo-600 hover:text-indigo-800">
+                                            <svg x-show="!decodeIsPlaying" class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                                <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
+                                            </svg>
+                                            <svg x-show="decodeIsPlaying" class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                                <path d="M5.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75A.75.75 0 007.25 3h-1.5zM12.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75a.75.75 0 00-.75-.75h-1.5z"/>
+                                            </svg>
+                                        </button>
+                                        <span class="text-xs text-gray-500"
+                                            x-text="'CER: ' + (selectedSample.cer * 100).toFixed(1) + '%'"></span>
+                                    </div>
+                                </div>
+
+                                <!-- Text Comparison with Diff -->
+                                <div class="bg-white rounded-lg shadow p-4 space-y-3">
+                                    <div>
+                                        <label class="text-xs font-medium text-gray-500 mb-1 block">Reference (REF)</label>
+                                        <div class="p-3 bg-gray-50 rounded-lg text-sm text-gray-700 whitespace-pre-wrap"
+                                            x-text="selectedSample.ref || '-'"></div>
+                                    </div>
+                                    <div>
+                                        <label class="text-xs font-medium text-gray-500 mb-1 block">Hypothesis (HYP)</label>
+                                        <div class="p-3 bg-blue-50 rounded-lg text-sm whitespace-pre-wrap"
+                                            x-html="charDiffHtml(selectedSample.ref, selectedSample.hyp)"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                        <template x-if="!selectedSample">
+                            <div class="flex-1 flex items-center justify-center bg-white rounded-lg shadow">
+                                <p class="text-sm text-gray-400">Select a sample from the list</p>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Export Model -->
+                <div class="bg-white rounded-lg shadow p-4 mt-4">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">Export Model</h3>
+                    <div class="flex items-end gap-3">
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Format</label>
+                            <div class="flex gap-4">
+                                <label class="flex items-center gap-1.5 text-sm">
+                                    <input type="radio" value="onnx" x-model="exportFormat" class="text-indigo-600"> ONNX
+                                </label>
+                                <label class="flex items-center gap-1.5 text-sm">
+                                    <input type="radio" value="torchscript" x-model="exportFormat" class="text-indigo-600"> TorchScript
+                                </label>
+                            </div>
+                        </div>
+                        <button @click="exportModel()" :disabled="status.state !== 'idle' || !decodeCheckpoint"
+                            class="px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                            <span x-show="status.state !== 'exporting'">Export</span>
+                            <span x-show="status.state === 'exporting'" class="flex items-center gap-1">
+                                <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                </svg>
+                                Exporting...
+                            </span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <template x-if="!decodeResults.available">
+            <div class="bg-white rounded-lg shadow p-12 text-center text-gray-400">
+                <svg class="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                <p class="text-sm">No decode results available</p>
+                <p class="text-xs mt-1">Select a checkpoint and click "Decode" to evaluate the model</p>
+            </div>
+        </template>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import WaveSurfer from 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js';
+window.WaveSurfer = WaveSurfer;
+</script>
+<script>
+function trainingPage() {
+    return {
+        activeTab: 'setup',
+        ws: null,
+
+        // Config (from API)
+        config: {
+            shar_sources: [],
+            model: { type: 'conformer_ctc', attention_dim: 256, num_encoder_layers: 12, num_attention_heads: 4, dropout: 0.1, encoder_dim: '', num_encoder_layers_z: '' },
+            training_params: { num_epochs: 50, lr_factor: 2.5, warm_step: 5000, clip_grad_norm: 5.0 },
+            device: 'auto',
+        },
+        dataStats: { prepared: false },
+        checkpoints: [],
+        resumeCheckpoint: '',
+
+        // Status (from WS + API)
+        status: {
+            state: 'idle',
+            current_epoch: 0,
+            total_epochs: 0,
+            train_loss: 0,
+            val_loss: 0,
+            lr: 0,
+            best_val_loss: null,
+            best_epoch: 0,
+            error: null,
+            epochs: [],
+        },
+
+        // Monitor
+        logLines: [],
+        logAutoScroll: true,
+        monitorStartTime: null,
+        monitorElapsed: '',
+        _monitorInterval: null,
+
+        // Results
+        decodeCheckpoint: '',
+        decodeSplit: 'test',
+        decodeResults: { available: false },
+        selectedSampleIdx: -1,
+        exportFormat: 'torchscript',
+        decodeWavesurfer: null,
+        decodeIsPlaying: false,
+
+        get selectedSample() {
+            return this.sortedSamples[this.selectedSampleIdx] || null;
+        },
+
+        get sortedSamples() {
+            if (!this.decodeResults.samples) return [];
+            return [...this.decodeResults.samples].sort((a, b) => b.cer - a.cer);
+        },
+
+        get cerBins() {
+            if (!this.decodeResults.samples) return [];
+            const bins = [
+                { label: '0-5%', min: 0, max: 0.05, count: 0, color: 'bg-green-500' },
+                { label: '5-10%', min: 0.05, max: 0.10, count: 0, color: 'bg-green-400' },
+                { label: '10-20%', min: 0.10, max: 0.20, count: 0, color: 'bg-yellow-400' },
+                { label: '20-50%', min: 0.20, max: 0.50, count: 0, color: 'bg-orange-400' },
+                { label: '50%+', min: 0.50, max: Infinity, count: 0, color: 'bg-red-500' },
+            ];
+            for (const s of this.decodeResults.samples) {
+                for (const b of bins) {
+                    if (s.cer >= b.min && s.cer < b.max) { b.count++; break; }
+                }
+            }
+            return bins;
+        },
+
+        get maxBinCount() {
+            return Math.max(...this.cerBins.map(b => b.count), 1);
+        },
+
+        async init() {
+            await Promise.all([
+                this.loadConfig(),
+                this.loadDataStats(),
+                this.loadCheckpoints(),
+                this.loadStatus(),
+            ]);
+
+            // Set default decode checkpoint to best if available
+            const best = this.checkpoints.find(c => c.is_best);
+            if (best) this.decodeCheckpoint = best.path;
+            else if (this.checkpoints.length) this.decodeCheckpoint = this.checkpoints[0].path;
+
+            this.connectWebSocket();
+            this.loadDecodeResults();
+        },
+
+        // --- Data Loading ---
+        async loadConfig() {
+            try {
+                const resp = await fetch('/api/training/config');
+                const data = await resp.json();
+                if (data.configured) {
+                    this.config = {
+                        ...this.config,
+                        shar_sources: data.shar_sources || [],
+                        device: data.device || 'auto',
+                        model: { ...this.config.model, ...data.model },
+                        training_params: { ...this.config.training_params, ...data.training_params },
+                    };
+                }
+            } catch (e) { console.error('Failed to load config:', e); }
+        },
+
+        async loadDataStats() {
+            try {
+                const resp = await fetch('/api/training/data-stats');
+                this.dataStats = await resp.json();
+            } catch (e) { console.error('Failed to load data stats:', e); }
+        },
+
+        async loadCheckpoints() {
+            try {
+                const resp = await fetch('/api/training/checkpoints');
+                const data = await resp.json();
+                this.checkpoints = data.checkpoints || [];
+            } catch (e) { console.error('Failed to load checkpoints:', e); }
+        },
+
+        async loadStatus() {
+            try {
+                const resp = await fetch('/api/training/status');
+                const data = await resp.json();
+                this.status = { ...this.status, ...data };
+            } catch (e) { console.error('Failed to load status:', e); }
+        },
+
+        async loadDecodeResults() {
+            try {
+                const resp = await fetch('/api/training/decode-results?split=' + this.decodeSplit);
+                this.decodeResults = await resp.json();
+            } catch (e) { console.error('Failed to load decode results:', e); }
+        },
+
+        // --- WebSocket ---
+        connectWebSocket() {
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            this.ws = new WebSocket(`${proto}//${window.location.host}/ws/training`);
+
+            this.ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === 'ping') {
+                    this.ws.send(JSON.stringify({ type: 'pong' }));
+                    return;
+                }
+                this.handleWsEvent(data);
+            };
+
+            this.ws.onclose = () => {
+                setTimeout(() => this.connectWebSocket(), 3000);
+            };
+
+            this.ws.onerror = () => {};
+        },
+
+        handleWsEvent(data) {
+            const evt = data.event;
+            if (!evt) return;
+
+            // Connection
+            if (evt === 'connected' && data.status) {
+                this.status = { ...this.status, ...data.status };
+                if (this.status.state === 'training') {
+                    this.startMonitorTimer();
+                    this.drawCharts();
+                }
+                return;
+            }
+
+            // Prepare events
+            if (evt === 'prepare_start') {
+                this.status.state = 'preparing';
+                this.addLog('Data preparation started');
+            }
+            if (evt === 'prepare_progress') {
+                this.addLog(`[Prepare] ${data.step}: ${data.detail || ''}`);
+            }
+            if (evt === 'prepare_complete') {
+                this.status.state = 'idle';
+                this.addLog('Data preparation complete');
+                this.loadDataStats();
+                this.loadCheckpoints();
+            }
+            if (evt === 'prepare_error') {
+                this.status.state = 'idle';
+                this.status.error = data.error;
+                this.addLog('ERROR: ' + data.error);
+            }
+
+            // Train events
+            if (evt === 'train_start') {
+                this.status.state = 'training';
+                this.status.total_epochs = data.total_epochs;
+                this.status.epochs = [];
+                this.addLog(`Training started: ${data.model_type}, ${(data.num_params / 1e6).toFixed(1)}M params, ${data.total_epochs} epochs`);
+                this.startMonitorTimer();
+                this.activeTab = 'monitor';
+            }
+            if (evt === 'epoch_start') {
+                this.status.current_epoch = data.epoch;
+            }
+            if (evt === 'batch_update') {
+                this.status.train_loss = data.loss;
+                this.status.lr = data.lr;
+                this.addLog(`[Epoch ${data.epoch}] step ${data.step}, loss: ${data.loss.toFixed(4)}, lr: ${data.lr.toExponential(1)}`);
+            }
+            if (evt === 'epoch_complete') {
+                this.status.train_loss = data.train_loss;
+                this.status.val_loss = data.val_loss || 0;
+                this.status.lr = data.lr;
+                this.status.epochs.push(data);
+                if (data.is_best) {
+                    this.status.best_val_loss = data.val_loss;
+                    this.status.best_epoch = data.epoch;
+                }
+                this.addLog(`Epoch ${data.epoch} complete: train=${data.train_loss.toFixed(4)}, val=${(data.val_loss || 0).toFixed(4)}, time=${data.elapsed_sec}s${data.is_best ? ' [BEST]' : ''}`);
+                this.drawCharts();
+                this.loadCheckpoints();
+            }
+            if (evt === 'train_complete') {
+                this.status.state = 'idle';
+                this.status.best_val_loss = data.best_val_loss;
+                this.status.best_epoch = data.best_epoch;
+                this.addLog(`Training complete! Best val_loss: ${data.best_val_loss?.toFixed(4)} at epoch ${data.best_epoch}`);
+                this.stopMonitorTimer();
+                this.loadCheckpoints();
+            }
+            if (evt === 'train_stopped') {
+                this.status.state = 'idle';
+                this.addLog(`Training stopped after epoch ${data.epoch}`);
+                this.stopMonitorTimer();
+                this.loadCheckpoints();
+            }
+            if (evt === 'train_error') {
+                this.status.state = 'idle';
+                this.status.error = data.error;
+                this.addLog('TRAINING ERROR: ' + data.error);
+                this.stopMonitorTimer();
+            }
+
+            // Decode events
+            if (evt === 'decode_start') {
+                this.status.state = 'decoding';
+                this.addLog(`Decoding ${data.split} set...`);
+            }
+            if (evt === 'decode_progress') {
+                this.addLog(`Decoded ${data.processed} utterances`);
+            }
+            if (evt === 'decode_complete') {
+                this.status.state = 'idle';
+                this.addLog(`Decode complete: CER=${(data.overall_cer * 100).toFixed(1)}% (${data.num_utterances} utterances)`);
+                this.loadDecodeResults();
+            }
+            if (evt === 'decode_error') {
+                this.status.state = 'idle';
+                this.status.error = data.error;
+                this.addLog('DECODE ERROR: ' + data.error);
+            }
+
+            // Export events
+            if (evt === 'export_start') {
+                this.status.state = 'exporting';
+                this.addLog(`Exporting model (${data.format})...`);
+            }
+            if (evt === 'export_complete') {
+                this.status.state = 'idle';
+                this.addLog(`Export complete: ${data.output_path} (${data.size_mb} MB)`);
+            }
+            if (evt === 'export_error') {
+                this.status.state = 'idle';
+                this.status.error = data.error;
+                this.addLog('EXPORT ERROR: ' + data.error);
+            }
+        },
+
+        addLog(msg) {
+            const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+            this.logLines.push(`${ts} - ${msg}`);
+            if (this.logLines.length > 500) this.logLines.splice(0, this.logLines.length - 500);
+            if (this.logAutoScroll) {
+                this.$nextTick(() => {
+                    const panel = this.$refs.logPanel;
+                    if (panel) panel.scrollTop = panel.scrollHeight;
+                });
+            }
+        },
+
+        // --- Monitor Timer ---
+        startMonitorTimer() {
+            this.monitorStartTime = Date.now();
+            this._monitorInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - this.monitorStartTime) / 1000);
+                const m = Math.floor(elapsed / 60);
+                const s = elapsed % 60;
+                this.monitorElapsed = `${m}:${s.toString().padStart(2, '0')} elapsed`;
+            }, 1000);
+        },
+
+        stopMonitorTimer() {
+            if (this._monitorInterval) {
+                clearInterval(this._monitorInterval);
+                this._monitorInterval = null;
+            }
+        },
+
+        // --- Actions ---
+        async prepareData() {
+            try {
+                await fetch('/api/training/prepare', { method: 'POST' });
+                this.status.state = 'preparing';
+            } catch (e) { console.error('Prepare failed:', e); }
+        },
+
+        async startTraining() {
+            try {
+                const body = {};
+                if (this.resumeCheckpoint) body.resume_checkpoint = this.resumeCheckpoint;
+                if (this.config.training_params.num_epochs) body.num_epochs = this.config.training_params.num_epochs;
+
+                await fetch('/api/training/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } catch (e) { console.error('Start training failed:', e); }
+        },
+
+        async stopTraining() {
+            try {
+                await fetch('/api/training/stop', { method: 'POST' });
+                this.addLog('Stop requested... will stop at next epoch boundary');
+            } catch (e) { console.error('Stop failed:', e); }
+        },
+
+        async runDecode() {
+            try {
+                await fetch('/api/training/decode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        checkpoint: this.decodeCheckpoint,
+                        split: this.decodeSplit,
+                    }),
+                });
+            } catch (e) { console.error('Decode failed:', e); }
+        },
+
+        async exportModel() {
+            try {
+                await fetch('/api/training/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        checkpoint: this.decodeCheckpoint,
+                        format: this.exportFormat,
+                    }),
+                });
+            } catch (e) { console.error('Export failed:', e); }
+        },
+
+        // --- Charts (Canvas) ---
+        drawCharts() {
+            this.$nextTick(() => {
+                this.drawLossChart();
+                this.drawLrChart();
+            });
+        },
+
+        drawLossChart() {
+            const canvas = document.getElementById('lossCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width;
+            const H = canvas.height;
+            const pad = { top: 15, right: 15, bottom: 30, left: 50 };
+
+            ctx.clearRect(0, 0, W, H);
+
+            const epochs = this.status.epochs || [];
+            if (epochs.length < 1) {
+                ctx.fillStyle = '#9ca3af';
+                ctx.font = '13px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('No epoch data yet', W / 2, H / 2);
+                return;
+            }
+
+            const trainLosses = epochs.map(e => e.train_loss);
+            const valLosses = epochs.map(e => e.val_loss).filter(v => v !== null && v !== undefined);
+            const allVals = [...trainLosses, ...valLosses].filter(v => v !== null && v !== undefined && isFinite(v));
+            const minY = Math.min(...allVals) * 0.9;
+            const maxY = Math.max(...allVals) * 1.1;
+            const rangeY = maxY - minY || 1;
+
+            const chartW = W - pad.left - pad.right;
+            const chartH = H - pad.top - pad.bottom;
+
+            const xScale = (i) => pad.left + (i / Math.max(epochs.length - 1, 1)) * chartW;
+            const yScale = (v) => pad.top + chartH - ((v - minY) / rangeY) * chartH;
+
+            // Grid lines
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i <= 4; i++) {
+                const y = pad.top + (chartH / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(pad.left, y);
+                ctx.lineTo(W - pad.right, y);
+                ctx.stroke();
+
+                ctx.fillStyle = '#9ca3af';
+                ctx.font = '10px system-ui';
+                ctx.textAlign = 'right';
+                const val = maxY - (rangeY / 4) * i;
+                ctx.fillText(val.toFixed(2), pad.left - 5, y + 3);
+            }
+
+            // X-axis labels
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '10px system-ui';
+            ctx.textAlign = 'center';
+            const step = Math.max(1, Math.floor(epochs.length / 10));
+            for (let i = 0; i < epochs.length; i += step) {
+                ctx.fillText(epochs[i].epoch, xScale(i), H - 5);
+            }
+            if (epochs.length > 1) {
+                ctx.fillText(epochs[epochs.length - 1].epoch, xScale(epochs.length - 1), H - 5);
+            }
+
+            // Train loss line (blue)
+            this._drawLine(ctx, epochs, (e, i) => ({ x: xScale(i), y: yScale(e.train_loss) }), '#3b82f6', 2);
+
+            // Val loss line (orange)
+            const valEpochs = epochs.filter(e => e.val_loss !== null && e.val_loss !== undefined);
+            if (valEpochs.length > 0) {
+                const valIndices = epochs.reduce((acc, e, i) => {
+                    if (e.val_loss !== null && e.val_loss !== undefined) acc.push(i);
+                    return acc;
+                }, []);
+                this._drawLine(ctx, valIndices, (idx) => ({ x: xScale(idx), y: yScale(epochs[idx].val_loss) }), '#f97316', 2);
+            }
+
+            // Legend
+            ctx.font = '11px system-ui';
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(W - pad.right - 130, pad.top, 10, 3);
+            ctx.fillText('train_loss', W - pad.right - 115, pad.top + 5);
+            ctx.fillStyle = '#f97316';
+            ctx.fillRect(W - pad.right - 60, pad.top, 10, 3);
+            ctx.fillText('val_loss', W - pad.right - 45, pad.top + 5);
+        },
+
+        drawLrChart() {
+            const canvas = document.getElementById('lrCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width;
+            const H = canvas.height;
+            const pad = { top: 10, right: 15, bottom: 25, left: 50 };
+
+            ctx.clearRect(0, 0, W, H);
+
+            const epochs = this.status.epochs || [];
+            if (epochs.length < 1) return;
+
+            const lrs = epochs.map(e => e.lr || 0);
+            const maxLr = Math.max(...lrs) * 1.1 || 1e-3;
+            const chartW = W - pad.left - pad.right;
+            const chartH = H - pad.top - pad.bottom;
+
+            const xScale = (i) => pad.left + (i / Math.max(epochs.length - 1, 1)) * chartW;
+            const yScale = (v) => pad.top + chartH - (v / maxLr) * chartH;
+
+            // Grid
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, pad.top + chartH);
+            ctx.lineTo(W - pad.right, pad.top + chartH);
+            ctx.stroke();
+
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '10px system-ui';
+            ctx.textAlign = 'right';
+            ctx.fillText(maxLr.toExponential(1), pad.left - 5, pad.top + 10);
+            ctx.fillText('0', pad.left - 5, pad.top + chartH + 3);
+
+            // LR line (purple)
+            this._drawLine(ctx, epochs, (e, i) => ({ x: xScale(i), y: yScale(e.lr || 0) }), '#8b5cf6', 1.5);
+        },
+
+        _drawLine(ctx, data, pointFn, color, width) {
+            if (data.length < 1) return;
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width;
+            const p0 = pointFn(data[0], 0);
+            ctx.moveTo(p0.x, p0.y);
+            for (let i = 1; i < data.length; i++) {
+                const p = pointFn(data[i], i);
+                ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+        },
+
+        // --- Results: Sample selection + audio ---
+        selectSample(idx) {
+            if (idx < 0 || idx >= this.sortedSamples.length) return;
+            this.selectedSampleIdx = idx;
+            this.loadDecodeAudio(idx);
+        },
+
+        loadDecodeAudio(sampleIdx) {
+            // Find original index in unsorted samples
+            const sample = this.sortedSamples[sampleIdx];
+            const origIdx = this.decodeResults.samples.indexOf(sample);
+            const url = `/api/training/decode-results/audio/${origIdx}?split=${this.decodeSplit}`;
+
+            if (this.decodeWavesurfer) {
+                this.decodeWavesurfer.destroy();
+                this.decodeWavesurfer = null;
+            }
+            this.decodeIsPlaying = false;
+
+            if (!window.WaveSurfer) return;
+
+            this.decodeWavesurfer = window.WaveSurfer.create({
+                container: '#decodeWaveform',
+                waveColor: '#c7d2fe',
+                progressColor: '#4f46e5',
+                height: 96,
+                barWidth: 2,
+                barGap: 1,
+                barRadius: 2,
+                cursorColor: '#6366f1',
+                cursorWidth: 2,
+                url: url,
+            });
+
+            this.decodeWavesurfer.on('play', () => { this.decodeIsPlaying = true; });
+            this.decodeWavesurfer.on('pause', () => { this.decodeIsPlaying = false; });
+            this.decodeWavesurfer.on('finish', () => { this.decodeIsPlaying = false; });
+        },
+
+        toggleDecodePlay() {
+            if (this.decodeWavesurfer) this.decodeWavesurfer.playPause();
+        },
+
+        // --- Char-level diff ---
+        charDiffHtml(ref, hyp) {
+            if (!ref || !hyp) return hyp || '-';
+
+            // Simple character-level alignment using DP
+            const r = ref.replace(/\s/g, '');
+            const h = hyp.replace(/\s/g, '');
+            const n = r.length;
+            const m = h.length;
+
+            // Build DP table
+            const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+            for (let i = 0; i <= n; i++) dp[i][0] = i;
+            for (let j = 0; j <= m; j++) dp[0][j] = j;
+            for (let i = 1; i <= n; i++) {
+                for (let j = 1; j <= m; j++) {
+                    if (r[i - 1] === h[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+                    else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+                }
+            }
+
+            // Backtrace
+            const ops = [];
+            let i = n, j = m;
+            while (i > 0 || j > 0) {
+                if (i > 0 && j > 0 && r[i - 1] === h[j - 1]) {
+                    ops.unshift({ type: 'match', char: h[j - 1] });
+                    i--; j--;
+                } else if (i > 0 && j > 0 && dp[i][j] === dp[i - 1][j - 1] + 1) {
+                    ops.unshift({ type: 'sub', ref: r[i - 1], hyp: h[j - 1] });
+                    i--; j--;
+                } else if (j > 0 && dp[i][j] === dp[i][j - 1] + 1) {
+                    ops.unshift({ type: 'ins', char: h[j - 1] });
+                    j--;
+                } else {
+                    ops.unshift({ type: 'del', char: r[i - 1] });
+                    i--;
+                }
+            }
+
+            // Build HTML
+            let html = '';
+            for (const op of ops) {
+                if (op.type === 'match') {
+                    html += this._escapeHtml(op.char);
+                } else if (op.type === 'sub') {
+                    html += `<span class="diff-sub" title="Expected: ${this._escapeHtml(op.ref)}">${this._escapeHtml(op.hyp)}</span>`;
+                } else if (op.type === 'ins') {
+                    html += `<span class="diff-ins" title="Inserted">${this._escapeHtml(op.char)}</span>`;
+                } else if (op.type === 'del') {
+                    html += `<span class="diff-del" title="Deleted">${this._escapeHtml(op.char)}</span>`;
+                }
+            }
+            return html;
+        },
+
+        _escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        },
+    };
+}
+</script>
+{% endblock %}

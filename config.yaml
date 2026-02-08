@@ -103,3 +103,51 @@ logging:
   level: "INFO"                        # DEBUG, INFO, WARNING, ERROR
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "./logs/echoharvester.log"     # 로그 파일 경로 (null이면 콘솔만)
+
+# 훈련 설정 (Conformer CTC)
+training:
+  shar_sources:                        # Shar 데이터 소스 경로 목록
+    # - "./output/shar"                 # 기존 소량 데이터 (1 YouTube, 120 cuts)
+    - "/mnt/z/data/shar_data/temp"      # ~79MB, 5 shards
+    - "/mnt/z/data/shar_data/radio"     # ~159MB, 9 shards
+    - "/mnt/z/data/shar_data/medical"   # ~174MB, 4 shards
+  data_dir: "./training_data"          # 분할된 학습 데이터 경로
+  exp_dir: "./exp"                     # 실험 결과 (체크포인트, 로그)
+  split:
+    train_ratio: 0.9                   # 훈련 세트 비율
+    val_ratio: 0.05                    # 검증 세트 비율
+    test_ratio: 0.05                   # 테스트 세트 비율
+    seed: 42                           # 재현성 시드
+  tokenizer:
+    type: "char"                       # character-level (한글 음절)
+  features:
+    num_mel_bins: 80                   # Mel 필터뱅크 차원
+  model:
+    type: "conformer_ctc"              # 모델 타입: conformer_ctc 또는 zipformer_ctc
+    attention_dim: 256                 # 어텐션 차원
+    num_encoder_layers: 12             # 인코더 레이어 수
+    num_attention_heads: 4             # 어텐션 헤드 수
+    feedforward_dim: 2048              # FFN 차원
+    depthwise_conv_kernel_size: 31     # ConvModule 커널 크기
+    dropout: 0.1                       # 드롭아웃
+  # Zipformer2 모델 사용 시 아래 설정으로 교체:
+  # model:
+  #   type: "zipformer_ctc"
+  #   encoder_dim: "192,256,384,512,384,256"        # 스택별 인코더 차원
+  #   num_encoder_layers: "2,2,3,4,3,2"             # 스택별 레이어 수
+  #   num_heads: "4,4,4,8,4,4"                      # 스택별 어텐션 헤드 수
+  #   feedforward_dim: "512,768,1024,1536,1024,768"  # 스택별 FFN 차원
+  #   cnn_module_kernel: "31,31,15,15,15,31"         # 스택별 Conv 커널
+  #   downsampling_factor: "1,2,4,8,4,2"             # 스택별 다운샘플링
+  #   dropout: 0.1
+  training_params:
+    num_epochs: 50                     # 전체 에포크 수
+    max_duration: 200.0                # 배치당 최대 오디오 길이 (초)
+    lr_factor: 2.5                     # Noam LR factor
+    warm_step: 5000                    # 워밍업 스텝
+    weight_decay: 0.000001             # 가중치 감쇠
+    clip_grad_norm: 5.0                # 그래디언트 클리핑
+    log_interval: 50                   # 로그 출력 간격 (배치)
+    valid_interval: 1                  # 검증 간격 (에포크)
+    keep_last_n: 5                     # 최근 N개 체크포인트 유지
+  device: "auto"                       # auto, cpu, cuda, mps

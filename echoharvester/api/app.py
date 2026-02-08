@@ -72,11 +72,12 @@ def create_app(config: Config | None = None) -> FastAPI:
         templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
     # Include API routes
-    from echoharvester.api.routes import dashboard, pipeline, sources, websocket
+    from echoharvester.api.routes import dashboard, pipeline, sources, training, websocket
 
     app.include_router(sources.router, prefix="/api/sources", tags=["sources"])
     app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+    app.include_router(training.router, prefix="/api/training", tags=["training"])
     app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 
     # HTML pages (3-page layout: Home, Process, Review)
@@ -100,6 +101,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         if templates:
             return templates.TemplateResponse("review.html", {"request": request})
         return HTMLResponse(content=get_fallback_html("Review"), status_code=200)
+
+    @app.get("/training", response_class=HTMLResponse)
+    async def training_page(request: Request):
+        """Training page (setup, monitor, results)."""
+        if templates:
+            return templates.TemplateResponse("training.html", {"request": request})
+        return HTMLResponse(content=get_fallback_html("Training"), status_code=200)
 
     # Backward-compatible redirects
     @app.get("/sources")
@@ -143,6 +151,7 @@ def get_fallback_html(title: str) -> str:
             <a href="/">Home</a>
             <a href="/process">Process</a>
             <a href="/review">Review</a>
+            <a href="/training">Training</a>
         </div>
         <h1>EchoHarvester - {title}</h1>
         <p>Templates not found. Please create HTML templates in the web/templates directory.</p>
