@@ -158,8 +158,11 @@ class Trainer:
                 ) * 3600  # seconds
                 steps_per_epoch = max(1, int(train_duration / params.max_duration))
             else:
-                # Fallback: count batches by iterating sampler (lazy, no data loaded)
-                steps_per_epoch = sum(1 for _ in train_dl.sampler)
+                # Fallback: count batches by iterating sampler
+                try:
+                    steps_per_epoch = len(train_dl)
+                except TypeError:
+                    steps_per_epoch = sum(1 for _ in train_dl.sampler)
             warm_step = max(1, int(params.warmup_epochs * steps_per_epoch))
             logger.info(
                 f"warmup_epochs={params.warmup_epochs} × {steps_per_epoch} steps/epoch "

@@ -550,6 +550,31 @@ WSL2에서 네트워크 드라이브 `\\DESKTOP-I7ITVII\easystore`를 마운트�
 - `loadConfig()`에서 API 응답 머지 시 프리셋 기반 폴백 적용
 - Zipformer UI 필드 확장: encoder_dim + num_encoder_layers + dropout 기본 표시, Advanced 접힘 영역에 num_heads, feedforward_dim, cnn_module_kernel, downsampling_factor 추가
 
+### Phase 12.5: Training 런타임 버그 수정
+**시작일**: 2026-02-09
+**상태**: 완료
+
+#### 수정 사항
+
+**버그 1: PositionalEncoding 시퀀스 길이 초과 크래시**
+- **증상**: 긴 오디오(~145초+)에서 `RuntimeError: The size of tensor a (14523) must match the size of tensor b (10000)`
+- **원인**: `PositionalEncoding.max_len=10000` 고정, Conv2dSubsampling 후에도 10,000 프레임 초과하는 시퀀스 존재
+- **수정**: `model.py` — `_extend_pe()` 메서드 추가, `forward()` 시 시퀀스 길이가 버퍼 초과하면 동적으로 PE 재계산
+- **결과**: 어떤 길이의 오디오도 크래시 없이 처리
+
+**버그 2: SimpleCutSampler `len()` 미지원 TypeError**
+- **증상**: `warmup_epochs > 0` + `stats.json` 없을 때 `TypeError: object of type 'SimpleCutSampler' has no len()`
+- **원인**: `trainer.py` 폴백 분기에서 `len(train_dl)` 호출 시 Lhotse `SimpleCutSampler`가 `__len__` 미구현
+- **수정**: `trainer.py` — `try: len(train_dl)` / `except TypeError:` 로 sampler 반복 카운트 폴백
+- **결과**: stats.json 유무와 관계없이 정상 동작
+
+#### 변경 파일 (2개)
+- `echoharvester/training/model.py`: `PositionalEncoding._extend_pe()` 추가 + `forward()` 수정
+- `echoharvester/training/trainer.py`: `warm_step` 계산 폴백 로직 try/except 래핑
+
+#### 검증
+- 기존 249 tests 전체 PASS (regression 없음)
+
 ---
 
 ## 향후 계획
