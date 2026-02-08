@@ -147,7 +147,19 @@ class Trainer:
         # Compute warm_step: warmup_epochs overrides if > 0
         warm_step = params.warm_step
         if params.warmup_epochs > 0:
-            steps_per_epoch = len(train_dl)
+            # Estimate steps_per_epoch from training data stats
+            stats_path = Path(self.config.data_dir) / "stats.json"
+            if stats_path.exists():
+                import json as _json
+                with open(stats_path, encoding="utf-8") as f:
+                    data_stats = _json.load(f)
+                train_duration = data_stats.get("splits", {}).get("train", {}).get(
+                    "total_duration_hours", 0
+                ) * 3600  # seconds
+                steps_per_epoch = max(1, int(train_duration / params.max_duration))
+            else:
+                # Fallback: count batches by iterating sampler (lazy, no data loaded)
+                steps_per_epoch = sum(1 for _ in train_dl.sampler)
             warm_step = max(1, int(params.warmup_epochs * steps_per_epoch))
             logger.info(
                 f"warmup_epochs={params.warmup_epochs} × {steps_per_epoch} steps/epoch "
